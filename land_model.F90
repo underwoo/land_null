@@ -16,49 +16,50 @@ implicit none
 
 private
 
-type, public :: land_data_type
+type land_data_type
    type(domain2d) :: domain  ! our computation domain
    real, pointer, dimension(:,:,:)   :: &  ! (lon, lat, tile)
-        tile_size,       & ! fractional coverage of cell by tile, dimensionless
-        t_surf,          & ! ground surface temperature, degK
-        t_ca,            & ! canopy air temperature, degK
-        q_ca,            & ! canopy air specific humidity, kg/kg
-        albedo,          & ! snow-adjusted land albedo
-        rough_mom,       & ! momentum roughness length, m
-        rough_heat         ! roughness length for tracers (heat and water), m
+        tile_size =>NULL(),       & ! fractional coverage of cell by tile, dimensionless
+        t_surf =>NULL(),          & ! ground surface temperature, degK
+        t_ca =>NULL(),            & ! canopy air temperature, degK
+        q_ca =>NULL(),            & ! canopy air specific humidity, kg/kg
+        albedo =>NULL(),          & ! snow-adjusted land albedo
+        rough_mom =>NULL(),       & ! momentum roughness length, m
+        rough_heat =>NULL(),      & ! roughness length for tracers (heat and water), m
+        rough_scale =>NULL()        ! roughness length for drag scaling
 
    real, pointer, dimension(:,:) :: &  ! (lon, lat)
-        discharge,       & ! flux from surface drainage network out of land model
-        discharge_snow     ! snow analogue of discharge
+        discharge =>NULL(),       & ! flux from surface drainage network out of land model
+        discharge_snow =>NULL()     ! snow analogue of discharge
 
    logical, pointer, dimension(:,:,:):: &
-        mask                ! true if land
+        mask =>NULL()                ! true if land
 
    integer :: axes(2)      ! axes IDs for diagnostics  
 
 end type land_data_type
 
-type, public :: atmos_land_boundary_type
+type atmos_land_boundary_type
    ! data passed from the atmosphere to the surface
    real, dimension(:,:,:), pointer :: &
-        t_flux,  &
-        q_flux,  &
-        lw_flux, &
-        sw_flux, &
-        lprec,   &
-        fprec
+        t_flux =>NULL(),  &
+        q_flux =>NULL(),  &
+        lw_flux =>NULL(), &
+        sw_flux =>NULL(), &
+        lprec =>NULL(),   &
+        fprec =>NULL()
    ! derivatives of the fluxes
    real, dimension(:,:,:), pointer :: &
-        dhdt,    &
-        dedt,    &
-        dedq,    &
-        drdt
+        dhdt =>NULL(),    &
+        dedt =>NULL(),    &
+        dedq =>NULL(),    &
+        drdt =>NULL()
    real, dimension(:,:,:), pointer :: &
-        drag_q,  &
-        p_surf
+        drag_q =>NULL(),  &
+        p_surf =>NULL()
 
    real, dimension(:,:,:), pointer :: &
-        data ! collective field for "named" fields above
+        data =>NULL() ! collective field for "named" fields above
    integer :: xtype             !REGRID, REDIST or DIRECT
 end type atmos_land_boundary_type
 
@@ -117,7 +118,7 @@ subroutine land_model_init &
 ! so critical. 
 
   ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(out) :: Land_bnd ! land boundary data
+  type(land_data_type), intent(inout) :: Land_bnd ! land boundary data
   type(time_type), intent(in)    :: time_init ! initial time of simulation (?)
   type(time_type), intent(in)    :: time      ! current time
   type(time_type), intent(in)    :: dt_fast   ! fast time step
@@ -162,7 +163,7 @@ subroutine land_model_init &
        Land_bnd % albedo     (is:ie,js:je,n_tiles), & 
        Land_bnd % rough_mom  (is:ie,js:je,n_tiles), & 
        Land_bnd % rough_heat (is:ie,js:je,n_tiles), & 
-
+       Land_bnd % rough_scale(is:ie,js:je,n_tiles), & 
        Land_bnd % discharge        (is:ie,js:je),   & 
        Land_bnd % discharge_snow   (is:ie,js:je),   &
 
@@ -189,6 +190,7 @@ subroutine land_model_init &
   Land_bnd%albedo = 0.0
   Land_bnd%rough_mom = 0.01
   Land_bnd%rough_heat = 0.01
+  Land_bnd%rough_scale = 1.0
   Land_bnd%discharge = 0.0
   Land_bnd%discharge_snow = 0.0
   Land_bnd%mask = .true.
@@ -214,7 +216,7 @@ subroutine land_model_end ( bnd )
 ! destruct the land model data
 
   ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(out) :: bnd
+  type(land_data_type), intent(inout) :: bnd
 
   module_is_initialized = .FALSE.
 
@@ -262,7 +264,7 @@ subroutine update_land_bnd_fast ( bnd )
 ! that the tiling does not change on fast time scale
 
   ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(out) :: bnd
+  type(land_data_type), intent(inout) :: bnd
 
   return
 
@@ -281,7 +283,7 @@ subroutine update_land_bnd_slow ( bnd )
 ! modified too, not yet clear how.
 
   ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(out) :: bnd
+  type(land_data_type), intent(inout) :: bnd
 
   return
 
