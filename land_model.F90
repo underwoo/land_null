@@ -24,6 +24,10 @@ type land_data_type
         t_ca =>NULL(),            & ! canopy air temperature, degK
         q_ca =>NULL(),            & ! canopy air specific humidity, kg/kg
         albedo =>NULL(),          & ! snow-adjusted land albedo
+        albedo_vis_dir =>NULL(),  & ! albedo for direct visible-band radiation
+        albedo_nir_dir =>NULL(),  & ! albedo for direct nir-band radiation 
+        albedo_vis_dif =>NULL(),  & ! albedo for diffuse visible-band radiation 
+        albedo_nir_dif =>NULL(),  & ! albedo for diffuse nir-band radiation
         rough_mom =>NULL(),       & ! momentum roughness length, m
         rough_heat =>NULL(),      & ! roughness length for tracers (heat and water), m
         rough_scale =>NULL()        ! roughness length for drag scaling
@@ -45,7 +49,12 @@ type atmos_land_boundary_type
         t_flux =>NULL(),  &
         q_flux =>NULL(),  &
         lw_flux =>NULL(), &
+        lwdn_flux =>NULL(), &
         sw_flux =>NULL(), &
+        sw_flux_down_vis_dir =>NULL(), &
+        sw_flux_down_total_dir =>NULL(), &
+        sw_flux_down_vis_dif =>NULL(), &
+        sw_flux_down_total_dif =>NULL(), &
         lprec =>NULL(),   &
         fprec =>NULL()
    ! derivatives of the fluxes
@@ -55,6 +64,12 @@ type atmos_land_boundary_type
         dedq =>NULL(),    &
         drdt =>NULL()
    real, dimension(:,:,:), pointer :: &
+        cd_m => NULL(),      &   ! drag coefficient for momentum, dimensionless
+        cd_t => NULL(),      &   ! drag coefficient for tracers, dimensionless
+        ustar => NULL(),     &   ! turbulent wind scale, m/s
+        bstar => NULL(),     &   ! turbulent bouyancy scale, m/s
+        wind => NULL(),      &   ! abs wind speed at the bottom of the atmos, m/s
+        z_bot => NULL(),     &   ! height of the bottom atmos. layer above surface, m
         drag_q =>NULL(),  &
         p_surf =>NULL()
 
@@ -97,7 +112,7 @@ contains
 
 ! ============================================================================
 subroutine land_model_init &
-     ( Land_bnd, time_init, time, dt_fast, dt_slow)
+     ( atmos2land, Land_bnd, time_init, time, dt_fast, dt_slow, atmos_domain)
 
   use fms_mod, only : field_size, read_data
   use mpp_domains_mod, only : mpp_define_layout, mpp_define_domains,&
@@ -118,11 +133,13 @@ subroutine land_model_init &
 ! so critical. 
 
   ! ---- arguments -----------------------------------------------------------
+  type(atmos_land_boundary_type), intent(inout) :: atmos2land ! land boundary data
   type(land_data_type), intent(inout) :: Land_bnd ! land boundary data
   type(time_type), intent(in)    :: time_init ! initial time of simulation (?)
   type(time_type), intent(in)    :: time      ! current time
   type(time_type), intent(in)    :: dt_fast   ! fast time step
   type(time_type), intent(in)    :: dt_slow   ! slow time step
+  type(domain2d),  intent(in), optional :: atmos_domain ! domain of computations
 
   real, dimension(:), allocatable :: glonb, glatb, glon, glat
   real, dimension(:,:), allocatable ::  gfrac, garea
@@ -156,19 +173,21 @@ subroutine land_model_init &
   call mpp_get_data_domain(Land_bnd%domain,is,ie,js,je)
 
   allocate ( &
-       Land_bnd % tile_size  (is:ie,js:je,n_tiles), & 
-       Land_bnd % t_surf     (is:ie,js:je,n_tiles), &
-       Land_bnd % t_ca       (is:ie,js:je,n_tiles), &
-       Land_bnd % q_ca       (is:ie,js:je,n_tiles), &
-       Land_bnd % albedo     (is:ie,js:je,n_tiles), & 
-       Land_bnd % rough_mom  (is:ie,js:je,n_tiles), & 
-       Land_bnd % rough_heat (is:ie,js:je,n_tiles), & 
-       Land_bnd % rough_scale(is:ie,js:je,n_tiles), & 
-       Land_bnd % discharge        (is:ie,js:je),   & 
-       Land_bnd % discharge_snow   (is:ie,js:je),   &
-
-       Land_bnd % mask       (is:ie,js:je,n_tiles) &
-       )
+       Land_bnd % tile_size      (is:ie,js:je,n_tiles), & 
+       Land_bnd % t_surf         (is:ie,js:je,n_tiles), &
+       Land_bnd % t_ca           (is:ie,js:je,n_tiles), &
+       Land_bnd % q_ca           (is:ie,js:je,n_tiles), &
+       Land_bnd % albedo         (is:ie,js:je,n_tiles), & 
+       Land_bnd % albedo_vis_dir (is:ie,js:je,n_tiles), &
+       Land_bnd % albedo_nir_dir (is:ie,js:je,n_tiles), &
+       Land_bnd % albedo_vis_dif (is:ie,js:je,n_tiles), &
+       Land_bnd % albedo_nir_dif (is:ie,js:je,n_tiles), &
+       Land_bnd % rough_mom      (is:ie,js:je,n_tiles), & 
+       Land_bnd % rough_heat     (is:ie,js:je,n_tiles), & 
+       Land_bnd % rough_scale    (is:ie,js:je,n_tiles), & 
+       Land_bnd % discharge      (is:ie,js:je),   & 
+       Land_bnd % discharge_snow (is:ie,js:je),   &
+       Land_bnd % mask       (is:ie,js:je,n_tiles)    )
   
   do i=is,ie
      do j=js,je
@@ -188,6 +207,10 @@ subroutine land_model_init &
   Land_bnd%t_ca = 273.0
   Land_bnd%q_ca = 0.0
   Land_bnd%albedo = 0.0
+  Land_bnd % albedo_vis_dir = 0.0
+  Land_bnd % albedo_nir_dir = 0.0
+  Land_bnd % albedo_vis_dif = 0.0
+  Land_bnd % albedo_nir_dif = 0.0
   Land_bnd%rough_mom = 0.01
   Land_bnd%rough_heat = 0.01
   Land_bnd%rough_scale = 1.0
@@ -201,6 +224,23 @@ subroutine land_model_init &
   Land_bnd%axes(2) = diag_axis_init('lat',glon,'degrees_N','Y','latitude',&
        set_name='land',domain2 = Land_bnd%domain)  
   
+  allocate( atmos2land % t_flux  (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % q_flux  (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % lw_flux (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % sw_flux (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % lprec   (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % fprec   (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % dhdt    (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % dedt    (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % dedq    (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % drdt    (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % drag_q  (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % p_surf  (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % sw_flux_down_vis_dir   (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % sw_flux_down_total_dir (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % sw_flux_down_vis_dif   (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % sw_flux_down_total_dif (is:ie,js:je,n_tiles) )
+
   return
 
 end subroutine land_model_init
@@ -211,11 +251,12 @@ end subroutine land_model_init
 
 
 ! ============================================================================
-subroutine land_model_end ( bnd )
+subroutine land_model_end ( atmos2land, bnd )
 ! ============================================================================
 ! destruct the land model data
 
   ! ---- arguments -----------------------------------------------------------
+  type(atmos_land_boundary_type), intent(inout) :: atmos2land
   type(land_data_type), intent(inout) :: bnd
 
   module_is_initialized = .FALSE.
@@ -233,7 +274,7 @@ subroutine update_land_model_fast ( atmos2land, bnd )
 ! updates state of the land model on the fast time scale
 
   ! ---- arguments -----------------------------------------------------------
-  type(atmos_land_boundary_type), intent(in)    :: atmos2land
+  type(atmos_land_boundary_type), intent(inout)    :: atmos2land
   type(land_data_type),  intent(inout) :: bnd ! state to update
 
   return
@@ -243,11 +284,12 @@ end subroutine update_land_model_fast
 
 
 ! ============================================================================
-subroutine update_land_model_slow ( bnd )
+subroutine update_land_model_slow ( atmos2land, bnd )
 ! ============================================================================
 ! updates land on slow time scale
 
   ! ---- arguments -----------------------------------------------------------
+  type(atmos_land_boundary_type), intent(inout) :: atmos2land
   type(land_data_type), intent(inout) :: bnd
 
 
