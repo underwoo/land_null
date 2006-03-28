@@ -22,7 +22,6 @@ type land_data_type
         tile_size =>NULL(),       & ! fractional coverage of cell by tile, dimensionless
         t_surf =>NULL(),          & ! ground surface temperature, degK
         t_ca =>NULL(),            & ! canopy air temperature, degK
-        q_ca =>NULL(),            & ! canopy air specific humidity, kg/kg
         albedo =>NULL(),          & ! snow-adjusted land albedo
         albedo_vis_dir =>NULL(),  & ! albedo for direct visible-band radiation
         albedo_nir_dir =>NULL(),  & ! albedo for direct nir-band radiation 
@@ -31,6 +30,8 @@ type land_data_type
         rough_mom =>NULL(),       & ! momentum roughness length, m
         rough_heat =>NULL(),      & ! roughness length for tracers (heat and water), m
         rough_scale =>NULL()        ! roughness length for drag scaling
+   real, pointer, dimension(:,:,:,:)   :: &  ! (lon, lat, tile, tracer)
+        tr    => NULL()              ! tracers, including canopy air specific humidity, kg/kg
 
    real, pointer, dimension(:,:) :: &  ! (lon, lat)
         discharge =>NULL(),       & ! flux from surface drainage network out of land model
@@ -40,14 +41,21 @@ type land_data_type
         mask =>NULL()                ! true if land
 
    integer :: axes(2)      ! axes IDs for diagnostics  
-
+   logical, pointer, dimension(:,:) :: maskmap =>NULL() ! A pointer to an array indicating which
+                                                        ! logical processors are actually used for
+                                                        ! the ocean code. The other logical
+                                                        ! processors would be all land points and
+                                                        ! are not assigned to actual processors.
+                                                        ! This need not be assigned if all logical
+                                                        ! processors are used.
 end type land_data_type
 
 type atmos_land_boundary_type
    ! data passed from the atmosphere to the surface
+   real, dimension(:,:,:,:), pointer :: tr_flux => NULL()
+   real, dimension(:,:,:,:), pointer :: dfdtr   => NULL()
    real, dimension(:,:,:), pointer :: &
         t_flux =>NULL(),  &
-        q_flux =>NULL(),  &
         lw_flux =>NULL(), &
         lwdn_flux =>NULL(), &
         sw_flux =>NULL(), &
@@ -166,9 +174,16 @@ subroutine land_model_init &
 
   gfrac = gfrac/garea
   
-  call mpp_define_layout((/1,siz(1),1,siz(2)/), mpp_npes(), layout)
-  call mpp_define_domains((/1,siz(1),1,siz(2)/), layout, Land_bnd%domain, &
-     xflags = CYCLIC_GLOBAL_DOMAIN)
+  if( ASSOCIATED(Land_bnd%maskmap) ) then
+     layout(1) = size(Land_bnd%maskmap,1)
+     layout(2) = size(Land_bnd%maskmap,2)
+     call mpp_define_domains((/1,siz(1),1,siz(2)/), layout, Land_bnd%domain, &
+        xflags = CYCLIC_GLOBAL_DOMAIN, maskmap = Land_bnd%maskmap, name='land model' )
+  else
+     call mpp_define_layout((/1,siz(1),1,siz(2)/), mpp_npes(), layout)
+     call mpp_define_domains((/1,siz(1),1,siz(2)/), layout, Land_bnd%domain, &
+        xflags = CYCLIC_GLOBAL_DOMAIN, name='land model')
+  end if
 
   call mpp_get_data_domain(Land_bnd%domain,is,ie,js,je)
 
@@ -176,7 +191,7 @@ subroutine land_model_init &
        Land_bnd % tile_size      (is:ie,js:je,n_tiles), & 
        Land_bnd % t_surf         (is:ie,js:je,n_tiles), &
        Land_bnd % t_ca           (is:ie,js:je,n_tiles), &
-       Land_bnd % q_ca           (is:ie,js:je,n_tiles), &
+       Land_bnd % tr             (is:ie,js:je,n_tiles,1), &     ! one tracer for q?
        Land_bnd % albedo         (is:ie,js:je,n_tiles), & 
        Land_bnd % albedo_vis_dir (is:ie,js:je,n_tiles), &
        Land_bnd % albedo_nir_dir (is:ie,js:je,n_tiles), &
@@ -205,7 +220,7 @@ subroutine land_model_init &
 
   Land_bnd%t_surf = 273.0
   Land_bnd%t_ca = 273.0
-  Land_bnd%q_ca = 0.0
+  Land_bnd%tr = 0.0
   Land_bnd%albedo = 0.0
   Land_bnd % albedo_vis_dir = 0.0
   Land_bnd % albedo_nir_dir = 0.0
@@ -225,7 +240,8 @@ subroutine land_model_init &
        set_name='land',domain2 = Land_bnd%domain)  
   
   allocate( atmos2land % t_flux  (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % q_flux  (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % tr_flux  (is:ie,js:je,n_tiles,1) )     ! one tracer for q?
+  allocate( atmos2land % dfdtr    (is:ie,js:je,n_tiles,1) )     ! one tracer for q?
   allocate( atmos2land % lw_flux (is:ie,js:je,n_tiles) )
   allocate( atmos2land % sw_flux (is:ie,js:je,n_tiles) )
   allocate( atmos2land % lprec   (is:ie,js:je,n_tiles) )
