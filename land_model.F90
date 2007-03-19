@@ -17,6 +17,7 @@ implicit none
 private
 
 type land_data_type
+   logical :: pe
    type(domain2d) :: domain  ! our computation domain
    real, pointer, dimension(:,:,:)   :: &  ! (lon, lat, tile)
         tile_size =>NULL(),       & ! fractional coverage of cell by tile, dimensionless
@@ -93,6 +94,7 @@ public land_model_end           ! finish land model calculations
 public update_land_model_fast   ! fast time-scale update of the land
 public update_land_model_slow   ! slow time-scale update of the land
 public send_averaged_data       ! send tile-averaged data to diag manager
+public Lnd_stock_pe
 ! ==== end of public interfaces ==============================================
 
 ! ==== public data type =====================================================
@@ -431,6 +433,15 @@ subroutine average_tiles ( x, area, mask, out )
        out(:,:) = out(:,:)/s(:,:)
 
 end subroutine average_tiles
+
+subroutine Lnd_stock_pe(bnd,index,value)
+type(land_data_type), intent(in) :: bnd
+integer, intent(in) :: index
+real,    intent(out) :: value
+
+value = 0.0
+
+end subroutine Lnd_stock_pe
 
 end module land_model_mod
    
