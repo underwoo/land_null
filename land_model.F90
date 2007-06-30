@@ -8,10 +8,17 @@ module land_model_mod
                               mpp_get_domain_components, mpp_get_pelist
 
   use fms_mod,          only: write_version_number, error_mesg, FATAL, NOTE, &
-                              mpp_pe, mpp_npes, mpp_root_pe
+                              mpp_pe, mpp_npes, mpp_root_pe, field_exist
 
-  use diag_manager_mod, only : send_data
+  use mpp_mod,          only: mpp_error, FATAL
+
+  use diag_manager_mod, only: send_data
+
+  use mosaic_mod,       only: get_mosaic_ntiles, calc_mosaic_grid_area, &
+                              get_mosaic_xgrid_size, get_mosaic_xgrid
   
+  use constants_mod,    only: PI, RADIUS
+
 implicit none
 
 private
@@ -107,8 +114,6 @@ character(len=*),   parameter :: module_name = 'land_mod'
 character(len=128), parameter :: version     = ''
 character(len=128), parameter :: tagname     = ''
 
-
-
 ! ==== local module variables ================================================
 integer            :: n_tiles = 1  ! number of tiles
 
@@ -151,39 +156,126 @@ subroutine land_model_init &
   type(time_type), intent(in)    :: dt_slow   ! slow time step
   type(domain2d),  intent(in), optional :: atmos_domain ! domain of computations
 
-  real, dimension(:), allocatable :: glonb, glatb, glon, glat
-  real, dimension(:,:), allocatable ::  gfrac, garea
-  integer :: siz(4), layout(2), is, ie, js, je, i, j, k
-  
-  
-  call field_size('INPUT/grid_spec','AREA_LND',siz)
-  allocate(gfrac(siz(1),siz(2)))
-  allocate(garea(siz(1),siz(2)))
-  allocate(glonb(siz(1)+1))
-  allocate(glatb(siz(2)+1))
-  allocate(glon(siz(1)))
-  allocate(glat(siz(2)))  
-  call read_data('INPUT/grid_spec','xbl',glonb)
-  call read_data('INPUT/grid_spec','ybl',glatb)
-  call read_data('INPUT/grid_spec','AREA_LND',gfrac)
-  call read_data('INPUT/grid_spec','AREA_LND_CELL',garea)
+  real, dimension(:),   allocatable :: glonb, glatb, glon, glat
+  real, dimension(:),   allocatable :: xgrid_area
+  integer, dimension(:),allocatable :: i1, j1, i2, j2
+  real, dimension(:,:), allocatable :: gfrac, garea, tmpx, tmpy, geo_lonv, geo_latv
+  integer                           :: siz(4), layout(2), is, ie, js, je, i, j, k, n, m
+  integer                           :: nlon, nlat, nlonb, nlatb, ntiles, nfile_axl, nxgrid 
+  character(len=256)                :: grid_file   = "INPUT/grid_spec.nc"
+  character(len=256)                :: land_mosaic, tile_file, axl_file
 
-  glonb(:) = glonb(:)
-  glatb(:) = glatb(:)
+  if( field_exist(grid_file, 'AREA_LND') ) then
+     call field_size( grid_file, 'AREA_LND', siz)
+     nlon = siz(1)
+     nlat = siz(2)
+     nlonb = nlon + 1
+     nlatb = nlat + 1
+     ! allocate data for longitude and latitude bounds
+     allocate( glonb(nlonb), glatb(nlatb), glon(nlon), glat(nlat))
+     allocate( garea(nlon,nlat), gfrac(nlon,nlat) )
+     ! read coordinates of grid cell vertices
+     call read_data(grid_file, "xbl", glonb, no_domain=.true.)
+     call read_data(grid_file, "ybl", glatb, no_domain=.true.)
 
-  glon(1:siz(1)) = (glonb(1:siz(1))+glonb(2:siz(1)+1))/2.0
-  glat(1:siz(2)) = (glatb(1:siz(2))+glatb(2:siz(2)+1))/2.0
+     ! read coordinates of grid cell centers
+ !    call read_data(grid_file, "xtl", glon, no_domain=.true.)
+ !    call read_data(grid_file, "ytl", glat, no_domain=.true.)
+     glon(1:siz(1)) = (glonb(1:siz(1))+glonb(2:siz(1)+1))/2.0
+     glat(1:siz(2)) = (glatb(1:siz(2))+glatb(2:siz(2)+1))/2.0
 
-  gfrac = gfrac/garea
+     ! read land area, land cell area and calculate the fractional land coverage 
+     call read_data(grid_file, "AREA_LND_CELL", garea, no_domain=.true.)
+     call read_data(grid_file, "AREA_LND",      gfrac,     no_domain=.true.)
+     ! calculate land fraction
+     gfrac     = gfrac/garea
+  else if( field_exist(grid_file, 'lnd_mosaic_file') ) then ! read from mosaic file
+     call read_data(grid_file, "lnd_mosaic_file", land_mosaic)     
+     land_mosaic = "INPUT/"//trim(land_mosaic)
+     ntiles = get_mosaic_ntiles(land_mosaic)
+     if(ntiles .NE. 1) call error_mesg('land_model_init',  &
+         ' ntiles should be 1 for land mosaic, contact developer', FATAL)
+     call read_data(land_mosaic, "gridfiles", tile_file )
+     tile_file = 'INPUT/'//trim(tile_file)
+     call field_size(tile_file, "x", siz)
+     if( mod(siz(1)-1,2) .NE. 0) call error_mesg("land_model_init", "size(x,1) - 1 should be divided by 2", FATAL);
+     if( mod(siz(2)-1,2) .NE. 0) call error_mesg("land_model_init", "size(x,2) - 1 should be divided by 2", FATAL);
+     nlon = (siz(1)-1)/2
+     nlat = (siz(2)-1)/2
+     nlonb = nlon + 1
+     nlatb = nlat + 1
+     allocate( glonb(nlonb), glatb(nlatb), glon(nlon), glat(nlat) )
+     allocate( garea(nlon,nlat), gfrac(nlon,nlat) )
+     !--- read the grid information on supergrid.
+     allocate( tmpx(2*nlon+1, 2*nlat+1), tmpy(2*nlon+1, 2*nlat+1) )
+     call read_data(tile_file, "x", tmpx, no_domain=.TRUE.)
+     call read_data(tile_file, "y", tmpy, no_domain=.TRUE.)
+     !--- make sure the grid is regular lat-lon grid.
+     do j = 1, 2*nlat+1
+        do i = 2, 2*nlon+1
+           if(tmpy(i,j) .NE. tmpy(1,j)) call mpp_error(FATAL, "land_model_init:longitude is not uniform")
+        end do
+     end do
+     do i = 1, 2*nlon+1
+        do j = 2, 2*nlat+1
+           if(tmpx(i,j) .NE. tmpx(i,1)) call mpp_error(FATAL, "land_model_init:latitude is not uniform")
+        end do
+     end do
+     !--- make sure the grid is regular lat-lon grid.
+
+     do i = 1, nlonb
+        glonb(i) = tmpx(2*i-1,1)
+     end do     
+     do j = 1, nlatb
+        glatb(j) = tmpy(1, 2*j-1)
+     end do     
+     do i = 1, nlon
+        glon(i) = tmpx(2*i,1)
+     end do     
+     do j = 1, nlat
+        glat(j) = tmpy(1, 2*j)
+     end do     
+     !--- land_cell_area will be calculated using the same way to calculate the area of xgrid.
+     allocate(geo_lonv(nlonb,nlatb), geo_latv(nlonb,nlatb))
+     do j = 1, nlatb
+        do i = 1, nlonb
+           geo_lonv(i,j) = tmpx(2*i-1,2*j-1)*pi/180.0
+           geo_latv(i,j) = tmpy(2*i-1,2*j-1)*pi/180.0
+        end do
+     end do
+
+     call calc_mosaic_grid_area(geo_lonv, geo_latv, garea)
+     deallocate(tmpx, tmpy, geo_lonv, geo_latv)
+
+     !--- land area will be calculated based on exchange grid area.
+     call field_size(grid_file, "aXl_file", siz)
+     nfile_axl = siz(2)
+     gfrac = 0
+     do n = 1, nfile_axl
+        call read_data(grid_file, "aXl_file", axl_file, level=n)
+        axl_file = 'INPUT/'//trim(axl_file)
+        nxgrid = get_mosaic_xgrid_size(axl_file)
+        allocate(i1(nxgrid), j1(nxgrid), i2(nxgrid), j2(nxgrid), xgrid_area(nxgrid))
+        call get_mosaic_xgrid(aXl_file, i1, j1, i2, j2, xgrid_area)
+        do m = 1, nxgrid
+           i = i2(m); j = j2(m)
+           gfrac(i,j) = gfrac(i,j) + xgrid_area(m)
+        end do
+        deallocate(i1, j1, i2, j2, xgrid_area)
+     end do     
+     gfrac = gfrac*4*PI*RADIUS*RADIUS/garea
+  else
+     call error_mesg('land_model_init','both AREA_LND and lnd_mosaic_file do not exist in file '//trim(grid_file),FATAL)
+  end if  
   
   if( ASSOCIATED(Land_bnd%maskmap) ) then
      layout(1) = size(Land_bnd%maskmap,1)
      layout(2) = size(Land_bnd%maskmap,2)
-     call mpp_define_domains((/1,siz(1),1,siz(2)/), layout, Land_bnd%domain, &
+     call mpp_define_domains((/1,nlon,1,nlat/), layout, Land_bnd%domain, &
         xflags = CYCLIC_GLOBAL_DOMAIN, maskmap = Land_bnd%maskmap, name='land model' )
   else
-     call mpp_define_layout((/1,siz(1),1,siz(2)/), mpp_npes(), layout)
-     call mpp_define_domains((/1,siz(1),1,siz(2)/), layout, Land_bnd%domain, &
+     call mpp_define_layout((/1,nlon,1,nlat/), mpp_npes(), layout)
+     call mpp_define_domains((/1,nlon,1,nlat/), layout, Land_bnd%domain, &
         xflags = CYCLIC_GLOBAL_DOMAIN, name='land model')
   end if
 
