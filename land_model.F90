@@ -72,7 +72,8 @@ type atmos_land_boundary_type
         sw_flux_down_vis_dif =>NULL(), &
         sw_flux_down_total_dif =>NULL(), &
         lprec =>NULL(),   &
-        fprec =>NULL()
+        fprec =>NULL(),   &
+        tprec =>NULL()
    ! derivatives of the fluxes
    real, dimension(:,:,:), pointer :: &
         dhdt =>NULL(),    &
@@ -340,6 +341,7 @@ subroutine land_model_init &
   allocate( atmos2land % sw_flux (is:ie,js:je,n_tiles) )
   allocate( atmos2land % lprec   (is:ie,js:je,n_tiles) )
   allocate( atmos2land % fprec   (is:ie,js:je,n_tiles) )
+  allocate( atmos2land % tprec   (is:ie,js:je,n_tiles) )
   allocate( atmos2land % dhdt    (is:ie,js:je,n_tiles) )
   allocate( atmos2land % dedt    (is:ie,js:je,n_tiles) )
   allocate( atmos2land % dedq    (is:ie,js:je,n_tiles) )
