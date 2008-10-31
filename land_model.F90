@@ -98,6 +98,7 @@ end type atmos_land_boundary_type
 ! ==== public interfaces =====================================================
 public land_model_init          ! initialize the land model
 public land_model_end           ! finish land model calculations
+public land_model_restart
 
 public update_land_model_fast   ! fast time-scale update of the land
 public update_land_model_slow   ! slow time-scale update of the land
@@ -378,7 +379,10 @@ subroutine land_model_end ( atmos2land, bnd )
   
 end subroutine land_model_end
 
+subroutine land_model_restart(timestamp)
+  character(*), intent(in), optional :: timestamp ! timestamp to add to the file name
 
+end subroutine land_model_restart
 
 ! ============================================================================
 subroutine update_land_model_fast ( atmos2land, bnd )
