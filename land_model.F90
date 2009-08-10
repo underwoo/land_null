@@ -43,7 +43,9 @@ type land_data_type
 
    real, pointer, dimension(:,:) :: &  ! (lon, lat)
         discharge =>NULL(),       & ! flux from surface drainage network out of land model
-        discharge_snow =>NULL()     ! snow analogue of discharge
+        discharge_snow =>NULL(),  & ! snow analogue of discharge
+	discharge_heat      => NULL(),  & ! sensible heat of discharge (0 C datum)
+	discharge_snow_heat => NULL()     ! sensible heat of discharge_snow (0 C datum)
 
    logical, pointer, dimension(:,:,:):: &
         mask =>NULL()                ! true if land
@@ -298,6 +300,8 @@ subroutine land_model_init &
        Land_bnd % rough_scale    (is:ie,js:je,n_tiles), & 
        Land_bnd % discharge      (is:ie,js:je),   & 
        Land_bnd % discharge_snow (is:ie,js:je),   &
+       Land_bnd % discharge_heat (is:ie,js:je),   &
+       Land_bnd % discharge_snow_heat (is:ie,js:je),   &
        Land_bnd % mask       (is:ie,js:je,n_tiles)    )
   
   do i=is,ie
@@ -327,6 +331,8 @@ subroutine land_model_init &
   Land_bnd%rough_scale = 1.0
   Land_bnd%discharge = 0.0
   Land_bnd%discharge_snow = 0.0
+  Land_bnd%discharge_heat = 0.0
+  Land_bnd%discharge_snow_heat = 0.0
   Land_bnd%mask = .true.
   
   Land_bnd%axes(1) = diag_axis_init('lon',glon,'degrees_E','X','longitude',&
