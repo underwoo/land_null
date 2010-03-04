@@ -1,551 +1,311 @@
-module land_model_mod
+module land_model_mod ! This is the null version
 
-  use time_manager_mod, only: time_type
+use  mpp_domains_mod, only : CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domain
+use  mpp_domains_mod, only : domain2d, mpp_define_layout, mpp_define_domains
+use  mpp_domains_mod, only : mpp_get_ntile_count, mpp_get_tile_id, mpp_get_current_ntile
 
-  use mpp_domains_mod,  only: domain1D, domain2d, mpp_get_layout, mpp_define_layout, &
-                              mpp_define_domains, mpp_get_compute_domain,            &
-                              CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domains,         &
-                              mpp_get_domain_components, mpp_get_pelist
+use time_manager_mod, only : time_type
 
-  use fms_mod,          only: write_version_number, error_mesg, FATAL, NOTE, &
-                              mpp_pe, mpp_npes, mpp_root_pe, field_exist
+use diag_manager_mod, only : diag_axis_init
 
-  use mpp_mod,          only: mpp_error, FATAL
+use tracer_manager_mod, only : register_tracers
 
-  use diag_manager_mod, only: send_data
+use field_manager_mod , only : MODEL_LAND
 
-  use mosaic_mod,       only: get_mosaic_ntiles, calc_mosaic_grid_area, &
-                              get_mosaic_xgrid_size, get_mosaic_xgrid
-  
-  use constants_mod,    only: PI, RADIUS
+use          fms_mod, only : write_version_number, error_mesg, FATAL, mpp_npes
+
+use         grid_mod, only : get_grid_ntiles, get_grid_size, define_cube_mosaic
+use         grid_mod, only : get_grid_cell_vertices, get_grid_cell_centers
 
 implicit none
-
 private
 
-type land_data_type
-   logical :: pe
-   type(domain2d) :: domain  ! our computation domain
-   real, pointer, dimension(:,:,:)   :: &  ! (lon, lat, tile)
-        tile_size =>NULL(),       & ! fractional coverage of cell by tile, dimensionless
-        t_surf =>NULL(),          & ! ground surface temperature, degK
-        t_ca =>NULL(),            & ! canopy air temperature, degK
-        albedo =>NULL(),          & ! snow-adjusted land albedo
-        albedo_vis_dir =>NULL(),  & ! albedo for direct visible-band radiation
-        albedo_nir_dir =>NULL(),  & ! albedo for direct nir-band radiation 
-        albedo_vis_dif =>NULL(),  & ! albedo for diffuse visible-band radiation 
-        albedo_nir_dif =>NULL(),  & ! albedo for diffuse nir-band radiation
-        rough_mom =>NULL(),       & ! momentum roughness length, m
-        rough_heat =>NULL(),      & ! roughness length for tracers (heat and water), m
-        rough_scale =>NULL()        ! roughness length for drag scaling
-   real, pointer, dimension(:,:,:,:)   :: &  ! (lon, lat, tile, tracer)
-        tr    => NULL()              ! tracers, including canopy air specific humidity, kg/kg
+! ==== public interfaces =====================================================
 
-   real, pointer, dimension(:,:) :: &  ! (lon, lat)
-        discharge =>NULL(),       & ! flux from surface drainage network out of land model
-        discharge_snow =>NULL(),  & ! snow analogue of discharge
-	discharge_heat      => NULL(),  & ! sensible heat of discharge (0 C datum)
-	discharge_snow_heat => NULL()     ! sensible heat of discharge_snow (0 C datum)
+public land_model_init          ! initialize the land model
+public land_model_end           ! finish land model calculations
+public land_model_restart       ! saves the land model restart(s)
+public update_land_model_fast   ! time-step integration
+public update_land_model_slow   ! time-step integration
+public atmos_land_boundary_type ! data from coupler to land
+public land_data_type           ! data from land to coupler
+public :: Lnd_stock_pe          ! return stocks of conservative quantities
 
-   logical, pointer, dimension(:,:,:):: &
-        mask =>NULL()                ! true if land
+! ==== end of public interfaces ==============================================
 
-   integer :: axes(2)      ! axes IDs for diagnostics  
-   logical, pointer, dimension(:,:) :: maskmap =>NULL() ! A pointer to an array indicating which
-                                                        ! logical processors are actually used for
-                                                        ! the ocean code. The other logical
-                                                        ! processors would be all land points and
-                                                        ! are not assigned to actual processors.
-                                                        ! This need not be assigned if all logical
-                                                        ! processors are used.
-end type land_data_type
+character(len=*), parameter :: &
+     version = '$Id: land_model.F90,v 18.0 2010/03/02 23:37:40 fms Exp $', &
+     tagname = '$Name: riga $'
 
-type atmos_land_boundary_type
-   ! data passed from the atmosphere to the surface
-   real, dimension(:,:,:,:), pointer :: tr_flux => NULL()
-   real, dimension(:,:,:,:), pointer :: dfdtr   => NULL()
-   real, dimension(:,:,:), pointer :: &
-        t_flux =>NULL(),  &
-        lw_flux =>NULL(), &
-        lwdn_flux =>NULL(), &
-        sw_flux =>NULL(), &
-        sw_flux_down_vis_dir =>NULL(), &
-        sw_flux_down_total_dir =>NULL(), &
-        sw_flux_down_vis_dif =>NULL(), &
-        sw_flux_down_total_dif =>NULL(), &
-        lprec =>NULL(),   &
-        fprec =>NULL(),   &
-        tprec =>NULL()
-   ! derivatives of the fluxes
-   real, dimension(:,:,:), pointer :: &
-        dhdt =>NULL(),    &
-        dedt =>NULL(),    &
-        dedq =>NULL(),    &
-        drdt =>NULL()
-   real, dimension(:,:,:), pointer :: &
-        cd_m => NULL(),      &   ! drag coefficient for momentum, dimensionless
-        cd_t => NULL(),      &   ! drag coefficient for tracers, dimensionless
-        ustar => NULL(),     &   ! turbulent wind scale, m/s
-        bstar => NULL(),     &   ! turbulent bouyancy scale, m/s
-        wind => NULL(),      &   ! abs wind speed at the bottom of the atmos, m/s
-        z_bot => NULL(),     &   ! height of the bottom atmos. layer above surface, m
-        drag_q =>NULL(),  &
-        p_surf =>NULL()
+type :: atmos_land_boundary_type
+   real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
+        t_flux    => NULL(), &   ! sensible heat flux, W/m2
+        lw_flux   => NULL(), &   ! net longwave radiation flux, W/m2
+        lwdn_flux => NULL(), &   ! downward longwave radiation flux, W/m2
+        sw_flux   => NULL(), &   ! net shortwave radiation flux, W/m2
+        swdn_flux => NULL(), &   ! downward shortwave radiation flux, W/m2
+        lprec     => NULL(), &   ! liquid precipitation rate, kg/(m2 s)
+        fprec     => NULL(), &   ! frozen precipitation rate, kg/(m2 s)
+        tprec     => NULL(), &   ! temperture of precipitation, degK
+        sw_flux_down_vis_dir   => NULL(), & ! visible direct 
+        sw_flux_down_total_dir => NULL(), & ! total direct
+        sw_flux_down_vis_dif   => NULL(), & ! visible diffuse
+        sw_flux_down_total_dif => NULL(), & ! total diffuse
+        dhdt      => NULL(), &   ! sensible w.r.t. surface temperature
+        dhdq      => NULL(), &   ! sensible w.r.t. surface humidity
+        drdt      => NULL(), &   ! longwave w.r.t. surface radiative temperature 
+        cd_m      => NULL(), &   ! drag coefficient for momentum, dimensionless
+        cd_t      => NULL(), &   ! drag coefficient for tracers, dimensionless
+        ustar     => NULL(), &   ! turbulent wind scale, m/s
+        bstar     => NULL(), &   ! turbulent buoyancy scale, m/s
+        wind      => NULL(), &   ! abs wind speed at the bottom of the atmos, m/s
+        z_bot     => NULL(), &   ! height of the bottom atmospheric layer above the surface, m
+        drag_q    => NULL(), &   ! product of cd_q by wind
+        p_surf    => NULL()      ! surface pressure, Pa
 
-   real, dimension(:,:,:), pointer :: &
-        data =>NULL() ! collective field for "named" fields above
+   real, dimension(:,:,:,:), pointer :: & ! (lon, lat, tile, tracer)
+        tr_flux => NULL(),   &   ! tracer flux, including water vapor flux
+        dfdtr   => NULL()        ! derivative of the flux w.r.t. tracer surface value, 
+                                 ! including evap over surface specific humidity
+
    integer :: xtype             !REGRID, REDIST or DIRECT
 end type atmos_land_boundary_type
 
-! ==== public interfaces =====================================================
-public land_model_init          ! initialize the land model
-public land_model_end           ! finish land model calculations
-public land_model_restart
 
-public update_land_model_fast   ! fast time-scale update of the land
-public update_land_model_slow   ! slow time-scale update of the land
-public send_averaged_data       ! send tile-averaged data to diag manager
-public Lnd_stock_pe
-! ==== end of public interfaces ==============================================
+type :: land_data_type
+   logical :: pe ! data presence indicator for stock calculations
+   real, pointer, dimension(:,:,:)   :: &  ! (lon, lat, tile)
+        tile_size      => NULL(),  & ! fractional coverage of cell by tile, dimensionless
+        t_surf         => NULL(),  & ! ground surface temperature, degK
+        t_ca           => NULL(),  & ! canopy air temperature, degK
+        albedo         => NULL(),  & ! broadband land albedo [unused?]
+        albedo_vis_dir => NULL(),  & ! albedo for direct visible radiation
+        albedo_nir_dir => NULL(),  & ! albedo for direct NIR radiation 
+        albedo_vis_dif => NULL(),  & ! albedo for diffuse visible radiation 
+        albedo_nir_dif => NULL(),  & ! albedo for diffuse NIR radiation
+        rough_mom      => NULL(),  & ! surface roughness length for momentum, m
+        rough_heat     => NULL(),  & ! roughness length for tracers and heat, m
+        rough_scale    => NULL()     ! topographic scaler for momentum drag, m
 
-! ==== public data type =====================================================
-public land_data_type, atmos_land_boundary_type
+   real, pointer, dimension(:,:,:,:)   :: &  ! (lon, lat, tile, tracer)
+        tr    => NULL()              ! tracers, including canopy air specific humidity
 
+   real, pointer, dimension(:,:) :: &  ! (lon, lat)
+     discharge           => NULL(),  & ! liquid water flux from land to ocean
+     discharge_heat      => NULL(),  & ! sensible heat of discharge (0 C datum)
+     discharge_snow      => NULL(),  & ! solid water flux from land to ocean
+     discharge_snow_heat => NULL()     ! sensible heat of discharge_snow (0 C datum)
 
-! ==== some names, for information only ======================================
-logical                       :: module_is_initialized = .FALSE.
-character(len=*),   parameter :: module_name = 'land_mod'
-character(len=128), parameter :: version     = ''
-character(len=128), parameter :: tagname     = ''
+   logical, pointer, dimension(:,:,:):: &
+        mask => NULL()               ! true if land
 
-! ==== local module variables ================================================
-integer            :: n_tiles = 1  ! number of tiles
-
-! ---- interface to tile-averaged diagnostic routines ------------------------
-interface send_averaged_data
-   module procedure send_averaged_data2d
-   module procedure send_averaged_data3d
-end interface
+   integer :: axes(2)        ! IDs of diagnostic axes
+   type(domain2d) :: domain  ! our computation domain
+   logical, pointer :: maskmap(:,:) 
+end type land_data_type
 
 contains
 
 ! ============================================================================
-subroutine land_model_init &
-     ( atmos2land, Land_bnd, time_init, time, dt_fast, dt_slow, atmos_domain)
+subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_slow)
 
-  use fms_mod, only : field_size, read_data
-  use mpp_domains_mod, only : mpp_define_layout, mpp_define_domains,&
-                              CYCLIC_GLOBAL_DOMAIN, mpp_get_data_domain
-  use diag_manager_mod, only : diag_axis_init
-! ============================================================================
-! initialiaze land model using grid description file as an input. This routine
-! reads land grid boundaries and area of land from a grid description file
+  type(atmos_land_boundary_type), intent(inout) :: cplr2land ! boundary data
+  type(land_data_type)          , intent(inout) :: land2cplr ! boundary data
+  type(time_type), intent(in) :: time_init ! initial time of simulation (?)
+  type(time_type), intent(in) :: time      ! current time
+  type(time_type), intent(in) :: dt_fast   ! fast time step
+  type(time_type), intent(in) :: dt_slow   ! slow time step
 
-! NOTES: theoretically, the grid description file can specify any regular
-! rectangular grid for land, not jast lon/lat grid. Therefore the variables
-! "xbl" and "ybl" in NetCDF grid spec file are not necessarily lon and lat
-! boundaries of the grid.
-!   However, at this time the module land_properties assumes that grid _is_
-! lon/lat and therefore the entire module also have to assume that the land 
-! grid is lon/lat.
-!   lon/lat grid is also assumed for the diagnostics, but this is probably not
-! so critical. 
+ ! ---- local vars
+  integer :: nlon, nlat ! size of global grid in lon and lat directions
+  integer :: ntiles     ! number of tiles in the mosaic grid
+  integer :: is,ie,js,je,id_lon,id_lat,i
+  type(domain2d) :: domain
+  real, allocatable, dimension(:,:)  :: glon, glat
+  integer, allocatable, dimension(:) :: tile_ids
+  integer :: ntracers, ntprog, ndiag
+  integer :: layout(2) = (/0,0/)
 
-  ! ---- arguments -----------------------------------------------------------
-  type(atmos_land_boundary_type), intent(inout) :: atmos2land ! land boundary data
-  type(land_data_type), intent(inout) :: Land_bnd ! land boundary data
-  type(time_type), intent(in)    :: time_init ! initial time of simulation (?)
-  type(time_type), intent(in)    :: time      ! current time
-  type(time_type), intent(in)    :: dt_fast   ! fast time step
-  type(time_type), intent(in)    :: dt_slow   ! slow time step
-  type(domain2d),  intent(in), optional :: atmos_domain ! domain of computations
+  call write_version_number (version, tagname)
 
-  real, dimension(:),   allocatable :: glonb, glatb, glon, glat
-  real, dimension(:),   allocatable :: xgrid_area
-  integer, dimension(:),allocatable :: i1, j1, i2, j2
-  real, dimension(:,:), allocatable :: gfrac, garea, tmpx, tmpy, geo_lonv, geo_latv
-  integer                           :: siz(4), layout(2), is, ie, js, je, i, j, k, n, m
-  integer                           :: nlon, nlat, nlonb, nlatb, ntiles, nfile_axl, nxgrid 
-  character(len=256)                :: grid_file   = "INPUT/grid_spec.nc"
-  character(len=256)                :: land_mosaic, tile_file, axl_file
-
-  if( field_exist(grid_file, 'AREA_LND') ) then
-     call field_size( grid_file, 'AREA_LND', siz)
-     nlon = siz(1)
-     nlat = siz(2)
-     nlonb = nlon + 1
-     nlatb = nlat + 1
-     ! allocate data for longitude and latitude bounds
-     allocate( glonb(nlonb), glatb(nlatb), glon(nlon), glat(nlat))
-     allocate( garea(nlon,nlat), gfrac(nlon,nlat) )
-     ! read coordinates of grid cell vertices
-     call read_data(grid_file, "xbl", glonb, no_domain=.true.)
-     call read_data(grid_file, "ybl", glatb, no_domain=.true.)
-
-     ! read coordinates of grid cell centers
- !    call read_data(grid_file, "xtl", glon, no_domain=.true.)
- !    call read_data(grid_file, "ytl", glat, no_domain=.true.)
-     glon(1:siz(1)) = (glonb(1:siz(1))+glonb(2:siz(1)+1))/2.0
-     glat(1:siz(2)) = (glatb(1:siz(2))+glatb(2:siz(2)+1))/2.0
-
-     ! read land area, land cell area and calculate the fractional land coverage 
-     call read_data(grid_file, "AREA_LND_CELL", garea, no_domain=.true.)
-     call read_data(grid_file, "AREA_LND",      gfrac,     no_domain=.true.)
-     ! calculate land fraction
-     gfrac     = gfrac/garea
-  else if( field_exist(grid_file, 'lnd_mosaic_file') ) then ! read from mosaic file
-     call read_data(grid_file, "lnd_mosaic_file", land_mosaic)     
-     land_mosaic = "INPUT/"//trim(land_mosaic)
-     ntiles = get_mosaic_ntiles(land_mosaic)
-     if(ntiles .NE. 1) call error_mesg('land_model_init',  &
-         ' ntiles should be 1 for land mosaic, contact developer', FATAL)
-     call read_data(land_mosaic, "gridfiles", tile_file )
-     tile_file = 'INPUT/'//trim(tile_file)
-     call field_size(tile_file, "x", siz)
-     if( mod(siz(1)-1,2) .NE. 0) call error_mesg("land_model_init", "size(x,1) - 1 should be divided by 2", FATAL);
-     if( mod(siz(2)-1,2) .NE. 0) call error_mesg("land_model_init", "size(x,2) - 1 should be divided by 2", FATAL);
-     nlon = (siz(1)-1)/2
-     nlat = (siz(2)-1)/2
-     nlonb = nlon + 1
-     nlatb = nlat + 1
-     allocate( glonb(nlonb), glatb(nlatb), glon(nlon), glat(nlat) )
-     allocate( garea(nlon,nlat), gfrac(nlon,nlat) )
-     !--- read the grid information on supergrid.
-     allocate( tmpx(2*nlon+1, 2*nlat+1), tmpy(2*nlon+1, 2*nlat+1) )
-     call read_data(tile_file, "x", tmpx, no_domain=.TRUE.)
-     call read_data(tile_file, "y", tmpy, no_domain=.TRUE.)
-     !--- make sure the grid is regular lat-lon grid.
-     do j = 1, 2*nlat+1
-        do i = 2, 2*nlon+1
-           if(tmpy(i,j) .NE. tmpy(1,j)) call mpp_error(FATAL, "land_model_init:longitude is not uniform")
-        end do
-     end do
-     do i = 1, 2*nlon+1
-        do j = 2, 2*nlat+1
-           if(tmpx(i,j) .NE. tmpx(i,1)) call mpp_error(FATAL, "land_model_init:latitude is not uniform")
-        end do
-     end do
-     !--- make sure the grid is regular lat-lon grid.
-
-     do i = 1, nlonb
-        glonb(i) = tmpx(2*i-1,1)
-     end do     
-     do j = 1, nlatb
-        glatb(j) = tmpy(1, 2*j-1)
-     end do     
-     do i = 1, nlon
-        glon(i) = tmpx(2*i,1)
-     end do     
-     do j = 1, nlat
-        glat(j) = tmpy(1, 2*j)
-     end do     
-     !--- land_cell_area will be calculated using the same way to calculate the area of xgrid.
-     allocate(geo_lonv(nlonb,nlatb), geo_latv(nlonb,nlatb))
-     do j = 1, nlatb
-        do i = 1, nlonb
-           geo_lonv(i,j) = tmpx(2*i-1,2*j-1)*pi/180.0
-           geo_latv(i,j) = tmpy(2*i-1,2*j-1)*pi/180.0
-        end do
-     end do
-
-     call calc_mosaic_grid_area(geo_lonv, geo_latv, garea)
-     deallocate(tmpx, tmpy, geo_lonv, geo_latv)
-
-     !--- land area will be calculated based on exchange grid area.
-     call field_size(grid_file, "aXl_file", siz)
-     nfile_axl = siz(2)
-     gfrac = 0
-     do n = 1, nfile_axl
-        call read_data(grid_file, "aXl_file", axl_file, level=n)
-        axl_file = 'INPUT/'//trim(axl_file)
-        nxgrid = get_mosaic_xgrid_size(axl_file)
-        allocate(i1(nxgrid), j1(nxgrid), i2(nxgrid), j2(nxgrid), xgrid_area(nxgrid))
-        call get_mosaic_xgrid(aXl_file, i1, j1, i2, j2, xgrid_area)
-        do m = 1, nxgrid
-           i = i2(m); j = j2(m)
-           gfrac(i,j) = gfrac(i,j) + xgrid_area(m)
-        end do
-        deallocate(i1, j1, i2, j2, xgrid_area)
-     end do     
-     gfrac = gfrac*4*PI*RADIUS*RADIUS/garea
+  ! define the processor layout information according to the global grid size 
+  call get_grid_ntiles('LND',ntiles)
+  call get_grid_size('LND',1,nlon,nlat)
+  if( layout(1)==0 .AND. layout(2)==0 ) then
+    call mpp_define_layout( (/1,nlon,1,nlat/), mpp_npes()/ntiles, layout )
+  endif
+  if( layout(1)/=0 .AND. layout(2)==0 )layout(2) = mpp_npes()/(layout(1)*ntiles)
+  if( layout(1)==0 .AND. layout(2)/=0 )layout(1) = mpp_npes()/(layout(2)*ntiles)
+  
+  ! defne land model domain
+  if (ntiles==1) then
+     call mpp_define_domains ((/1,nlon, 1, nlat/), layout, domain, xhalo=1, yhalo=1,&
+          xflags = CYCLIC_GLOBAL_DOMAIN, name = 'LAND MODEL')
   else
-     call error_mesg('land_model_init','both AREA_LND and lnd_mosaic_file do not exist in file '//trim(grid_file),FATAL)
-  end if  
-  
-  if( ASSOCIATED(Land_bnd%maskmap) ) then
-     layout(1) = size(Land_bnd%maskmap,1)
-     layout(2) = size(Land_bnd%maskmap,2)
-     call mpp_define_domains((/1,nlon,1,nlat/), layout, Land_bnd%domain, &
-        xflags = CYCLIC_GLOBAL_DOMAIN, maskmap = Land_bnd%maskmap, name='land model' )
+     call define_cube_mosaic ('LND', domain, layout, halo=1)
+  endif
+  land2cplr%domain = domain
+
+  call mpp_get_compute_domain(domain, is,ie,js,je)
+  allocate(land2cplr%tile_size(is:ie,js:je,1))
+  land2cplr%tile_size = 0.0
+
+  allocate(tile_ids(mpp_get_current_ntile(domain)))
+  tile_ids = mpp_get_tile_id(domain)
+  allocate(glon(nlon,nlat), glat(nlon,nlat))
+  call get_grid_cell_centers ('LND', tile_ids(1), glon,  glat)
+
+  if(mpp_get_ntile_count(domain)==1) then
+     ! grid has just one tile, so we assume that the grid is regular lat-lon
+     ! define longitude axes and its edges
+     id_lon  = diag_axis_init('lon', glon(:,1), 'degrees_E', 'X', &
+          long_name='longitude', set_name='land', domain2=domain )
+
+     ! define latitude axes and its edges
+     id_lat = diag_axis_init ('lat', glat(1,:), 'degrees_N', 'Y', &
+          long_name='latitude',  set_name='land', domain2=domain )
   else
-     call mpp_define_layout((/1,nlon,1,nlat/), mpp_npes(), layout)
-     call mpp_define_domains((/1,nlon,1,nlat/), layout, Land_bnd%domain, &
-        xflags = CYCLIC_GLOBAL_DOMAIN, name='land model')
-  end if
+     id_lon = diag_axis_init ( 'grid_xt', (/(real(i),i=1,nlon)/), 'degrees_E', 'X', &
+          long_name='T-cell longitude', set_name='land', domain2=domain, aux='geolon_t' )
+     id_lat = diag_axis_init ( 'grid_yt', (/(real(i),i=1,nlat)/), 'degrees_N', 'Y', &
+          long_name='T-cell latitude',  set_name='land', domain2=domain, aux='geolat_t' )
+  endif
+  land2cplr%axes = (/id_lon,id_lat/)
 
-  call mpp_get_data_domain(Land_bnd%domain,is,ie,js,je)
+  call register_tracers(MODEL_LAND, ntracers, ntprog, ndiag)
 
-  allocate ( &
-       Land_bnd % tile_size      (is:ie,js:je,n_tiles), & 
-       Land_bnd % t_surf         (is:ie,js:je,n_tiles), &
-       Land_bnd % t_ca           (is:ie,js:je,n_tiles), &
-       Land_bnd % tr             (is:ie,js:je,n_tiles,1), &     ! one tracer for q?
-       Land_bnd % albedo         (is:ie,js:je,n_tiles), & 
-       Land_bnd % albedo_vis_dir (is:ie,js:je,n_tiles), &
-       Land_bnd % albedo_nir_dir (is:ie,js:je,n_tiles), &
-       Land_bnd % albedo_vis_dif (is:ie,js:je,n_tiles), &
-       Land_bnd % albedo_nir_dif (is:ie,js:je,n_tiles), &
-       Land_bnd % rough_mom      (is:ie,js:je,n_tiles), & 
-       Land_bnd % rough_heat     (is:ie,js:je,n_tiles), & 
-       Land_bnd % rough_scale    (is:ie,js:je,n_tiles), & 
-       Land_bnd % discharge      (is:ie,js:je),   & 
-       Land_bnd % discharge_snow (is:ie,js:je),   &
-       Land_bnd % discharge_heat (is:ie,js:je),   &
-       Land_bnd % discharge_snow_heat (is:ie,js:je),   &
-       Land_bnd % mask       (is:ie,js:je,n_tiles)    )
-  
-  do i=is,ie
-     do j=js,je
-        do k= 1, n_tiles
-           if (gfrac(i,j) > 0.0) then
-               Land_bnd%tile_size(i,j,k)  = 1.0/n_tiles
-               Land_bnd%mask(i,j,k) = .true.
-           else
-               Land_bnd%tile_size(i,j,k) = 0.0
-               Land_bnd%mask(i,j,k) = .false.
-           endif
-        enddo
-     enddo
-  enddo
+  allocate(land2cplr%mask          (is:ie,js:je,1))
+  allocate(land2cplr%t_surf        (is:ie,js:je,1))
+  allocate(land2cplr%t_ca          (is:ie,js:je,1))
+  allocate(land2cplr%tr            (is:ie,js:je,1,ntprog))
+  allocate(land2cplr%albedo        (is:ie,js:je,1))
+  allocate(land2cplr%albedo_vis_dir(is:ie,js:je,1))
+  allocate(land2cplr%albedo_nir_dir(is:ie,js:je,1))
+  allocate(land2cplr%albedo_vis_dif(is:ie,js:je,1))
+  allocate(land2cplr%albedo_nir_dif(is:ie,js:je,1))
+  allocate(land2cplr%rough_mom     (is:ie,js:je,1))
+  allocate(land2cplr%rough_heat    (is:ie,js:je,1))
+  allocate(land2cplr%rough_scale   (is:ie,js:je,1))
+  allocate(land2cplr%discharge     (is:ie,js:je))
+  allocate(land2cplr%discharge_heat(is:ie,js:je))
+  allocate(land2cplr%discharge_snow(is:ie,js:je))
+  allocate(land2cplr%discharge_snow_heat(is:ie,js:je))
 
-  Land_bnd%t_surf = 273.0
-  Land_bnd%t_ca = 273.0
-  Land_bnd%tr = 0.0
-  Land_bnd%albedo = 0.0
-  Land_bnd % albedo_vis_dir = 0.0
-  Land_bnd % albedo_nir_dir = 0.0
-  Land_bnd % albedo_vis_dif = 0.0
-  Land_bnd % albedo_nir_dif = 0.0
-  Land_bnd%rough_mom = 0.01
-  Land_bnd%rough_heat = 0.01
-  Land_bnd%rough_scale = 1.0
-  Land_bnd%discharge = 0.0
-  Land_bnd%discharge_snow = 0.0
-  Land_bnd%discharge_heat = 0.0
-  Land_bnd%discharge_snow_heat = 0.0
-  Land_bnd%mask = .true.
-  
-  Land_bnd%axes(1) = diag_axis_init('lon',glon,'degrees_E','X','longitude',&
-       set_name='land',domain2 = Land_bnd%domain)
+  land2cplr%mask              = .FALSE.
+  land2cplr%t_surf            = 280.0
+  land2cplr%t_ca              = 280.0
+  land2cplr%tr                = 0.0
+  land2cplr%albedo            = 0.0
+  land2cplr%albedo_vis_dir    = 0.0
+  land2cplr%albedo_nir_dir    = 0.0
+  land2cplr%albedo_vis_dif    = 0.0
+  land2cplr%albedo_nir_dif    = 0.0
+  land2cplr%rough_mom         = 0.0
+  land2cplr%rough_heat        = 0.0
+  land2cplr%rough_scale       = 0.0
+  land2cplr%discharge         = 0.0
+  land2cplr%discharge_heat    = 0.0
+  land2cplr%discharge_snow    = 0.0
+  land2cplr%discharge_snow_heat = 0.0
 
-  Land_bnd%axes(2) = diag_axis_init('lat',glon,'degrees_N','Y','latitude',&
-       set_name='land',domain2 = Land_bnd%domain)  
-  
-  allocate( atmos2land % t_flux  (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % tr_flux  (is:ie,js:je,n_tiles,1) )     ! one tracer for q?
-  allocate( atmos2land % dfdtr    (is:ie,js:je,n_tiles,1) )     ! one tracer for q?
-  allocate( atmos2land % lw_flux (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % sw_flux (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % lprec   (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % fprec   (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % tprec   (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % dhdt    (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % dedt    (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % dedq    (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % drdt    (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % drag_q  (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % p_surf  (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % sw_flux_down_vis_dir   (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % sw_flux_down_total_dir (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % sw_flux_down_vis_dif   (is:ie,js:je,n_tiles) )
-  allocate( atmos2land % sw_flux_down_total_dif (is:ie,js:je,n_tiles) )
+  allocate(cplr2land%t_flux(is:ie,js:je,1) )
+  allocate(cplr2land%lw_flux(is:ie,js:je,1) )
+  allocate(cplr2land%sw_flux(is:ie,js:je,1) )
+  allocate(cplr2land%lprec(is:ie,js:je,1) )
+  allocate(cplr2land%fprec(is:ie,js:je,1) )
+  allocate(cplr2land%tprec(is:ie,js:je,1) )
+  allocate(cplr2land%dhdt(is:ie,js:je,1) )
+  allocate(cplr2land%dhdq(is:ie,js:je,1) )
+  allocate(cplr2land%drdt(is:ie,js:je,1) )
+  allocate(cplr2land%p_surf(is:ie,js:je,1) )
+  allocate(cplr2land%tr_flux(is:ie,js:je,1,ntprog) )
+  allocate(cplr2land%dfdtr(is:ie,js:je,1,ntprog) )
+  allocate(cplr2land%lwdn_flux(is:ie,js:je,1) )
+  allocate(cplr2land%swdn_flux(is:ie,js:je,1) )
+  allocate(cplr2land%sw_flux_down_vis_dir(is:ie,js:je,1) )
+  allocate(cplr2land%sw_flux_down_total_dir(is:ie,js:je,1) )
+  allocate(cplr2land%sw_flux_down_vis_dif(is:ie,js:je,1) )
+  allocate(cplr2land%sw_flux_down_total_dif(is:ie,js:je,1) )
+  allocate(cplr2land%cd_t(is:ie,js:je,1) )
+  allocate(cplr2land%cd_m(is:ie,js:je,1) )
+  allocate(cplr2land%bstar(is:ie,js:je,1) )
+  allocate(cplr2land%ustar(is:ie,js:je,1) )
+  allocate(cplr2land%wind(is:ie,js:je,1) )
+  allocate(cplr2land%z_bot(is:ie,js:je,1) )
+  allocate(cplr2land%drag_q(is:ie,js:je,1) )
 
-  return
+  cplr2land%t_flux                 = 0.0
+  cplr2land%lw_flux                = 0.0
+  cplr2land%sw_flux                = 0.0
+  cplr2land%lprec                  = 0.0
+  cplr2land%fprec                  = 0.0
+  cplr2land%tprec                  = 0.0
+  cplr2land%dhdt                   = 0.0
+  cplr2land%dhdq                   = 0.0
+  cplr2land%drdt                   = 0.0
+  cplr2land%p_surf                 = 1.0e5
+  cplr2land%tr_flux                = 0.0
+  cplr2land%dfdtr                  = 0.0
+  cplr2land%lwdn_flux              = 0.0
+  cplr2land%swdn_flux              = 0.0
+  cplr2land%sw_flux_down_vis_dir   = 0.0
+  cplr2land%sw_flux_down_total_dir = 0.0
+  cplr2land%sw_flux_down_vis_dif   = 0.0
+  cplr2land%sw_flux_down_total_dif = 0.0
+  cplr2land%cd_t                   = 0.0
+  cplr2land%cd_m                   = 0.0
+  cplr2land%bstar                  = 0.0
+  cplr2land%ustar                  = 0.0
+  cplr2land%wind                   = 0.0
+  cplr2land%z_bot                  = 0.0
+  cplr2land%drag_q                 = 0.0
+
+  deallocate(glon, glat, tile_ids)
 
 end subroutine land_model_init
 
-
-
-
-
-
 ! ============================================================================
-subroutine land_model_end ( atmos2land, bnd )
-! ============================================================================
-! destruct the land model data
-
-  ! ---- arguments -----------------------------------------------------------
-  type(atmos_land_boundary_type), intent(inout) :: atmos2land
-  type(land_data_type), intent(inout) :: bnd
-
-  module_is_initialized = .FALSE.
-
-!  deallocate boundary exchange data
-!  call deallocate_boundary_data ( bnd )
+subroutine land_model_end (cplr2land, land2cplr)
+  type(atmos_land_boundary_type), intent(inout) :: cplr2land
+  type(land_data_type)          , intent(inout) :: land2cplr
   
 end subroutine land_model_end
 
+! ============================================================================
 subroutine land_model_restart(timestamp)
-  character(*), intent(in), optional :: timestamp ! timestamp to add to the file name
-
+  character(*), intent(in), optional :: timestamp
+  
 end subroutine land_model_restart
 
 ! ============================================================================
-subroutine update_land_model_fast ( atmos2land, bnd )
-! ============================================================================
-! updates state of the land model on the fast time scale
+subroutine update_land_model_fast ( cplr2land, land2cplr )
+  type(atmos_land_boundary_type), intent(in)    :: cplr2land
+  type(land_data_type)          , intent(inout) :: land2cplr
 
-  ! ---- arguments -----------------------------------------------------------
-  type(atmos_land_boundary_type), intent(inout)    :: atmos2land
-  type(land_data_type),  intent(inout) :: bnd ! state to update
-
-  return
+  call error_mesg('update_land_model_fast','Should not be calling null version of update_land_model_fast',FATAL)
 
 end subroutine update_land_model_fast
 
 
-
 ! ============================================================================
-subroutine update_land_model_slow ( atmos2land, bnd )
-! ============================================================================
-! updates land on slow time scale
+subroutine update_land_model_slow ( cplr2land, land2cplr )
+  type(atmos_land_boundary_type), intent(inout) :: cplr2land
+  type(land_data_type)          , intent(inout) :: land2cplr
 
-  ! ---- arguments -----------------------------------------------------------
-  type(atmos_land_boundary_type), intent(inout) :: atmos2land
-  type(land_data_type), intent(inout) :: bnd
+  call error_mesg('update_land_model_slow','Should not be calling null version of update_land_model_slow',FATAL)
 
-
-  return
-  
 end subroutine update_land_model_slow
 
-
 ! ============================================================================
-subroutine update_land_bnd_fast ( bnd )
-! ============================================================================
-! updates land boundary data (the ones that atmosphere sees) on the fast time 
-! scale this routine does not update tiling structure, because it is assumed
-! that the tiling does not change on fast time scale
-
-  ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(inout) :: bnd
-
-  return
-
-end subroutine update_land_bnd_fast
-
-
-! ============================================================================
-subroutine update_land_bnd_slow ( bnd )
-! ============================================================================
-! updates land boundary data for the atmosphere on the slow time scale. This
-! subroutine is responsible for the changing of tiling structure, if necessary,
-! as well as for changing albedo, drag coefficients and such.
-
-! NOTE: if tiling structure has been modified, then probably the distribution
-! of other boundary values, such as temperature and surface humidity, should be
-! modified too, not yet clear how.
-
-  ! ---- arguments -----------------------------------------------------------
-  type(land_data_type), intent(inout) :: bnd
-
-  return
-
-end subroutine update_land_bnd_slow
-
-! ============================================================================
-function send_averaged_data2d ( id, field, area, time, mask )
-! ============================================================================
-! average the data over tiles and send then to diagnostics
-
-  ! --- return value ---------------------------------------------------------
-  logical                      :: send_averaged_data2d
-  ! --- arguments ------------------------------------------------------------
-  integer, intent(in)          :: id             ! id od the diagnostic field 
-  real,    intent(in)          :: field(:,:,:)   ! field to average and send
-  real,    intent(in)          :: area (:,:,:)   ! area of tiles (== averaging 
-                                                 ! weights), arbitrary units
-  type(time_type), intent(in)  :: time           ! current time
-  logical, intent(in),optional :: mask (:,:,:)   ! land mask
-
-  ! --- local vars -----------------------------------------------------------
-  real  :: out(size(field,1), size(field,2))
-
-  call average_tiles( field, area, mask, out )
-  send_averaged_data2d = send_data( id, out, time, mask=ANY(mask,DIM=3) )
-end function send_averaged_data2d
-
-
-! ============================================================================
-function send_averaged_data3d( id, field, area, time, mask )
-! ============================================================================
-! average the data over tiles and send then to diagnostics
-
-  ! --- return value ---------------------------------------------------------
-  logical                      :: send_averaged_data3d
-  ! --- arguments ------------------------------------------------------------
-  integer, intent(in)          :: id              ! id of the diagnostic field
-  real,    intent(in)          :: field(:,:,:,:)  ! (lon, lat, tile, lev) field 
-                                                  ! to average and send
-  real,    intent(in)          :: area (:,:,:)    ! (lon, lat, tile) tile areas 
-                                                  ! ( == averaging weights), 
-                                                  ! arbitrary units
-  type(time_type), intent(in)  :: time            ! current time
-  logical, intent(in),optional :: mask (:,:,:)    ! (lon, lat, tile) land mask
-
-  ! --- local vars -----------------------------------------------------------
-  real    :: out(size(field,1), size(field,2), size(field,4))
-  logical :: mask3(size(field,1), size(field,2), size(field,4))
-  integer :: it
-
-  do it=1,size(field,4)
-     call average_tiles( field(:,:,:,it), area, mask, out(:,:,it) )
-  enddo
-
-  mask3(:,:,1) = ANY(mask,DIM=3)
-  do it = 2, size(field,4)
-     mask3(:,:,it) = mask3(:,:,1)
-  enddo
-
-  send_averaged_data3d = send_data( id, out, time, mask=mask3 )
-end function send_averaged_data3d
-
-subroutine average_tiles ( x, area, mask, out )
-! ============================================================================
-! average 2-dimensional field over tiles
-  ! --- arguments ------------------------------------------------------------
-  real,    intent(in)  :: x   (:,:,:) ! (lon, lat, tile) field to average
-  real,    intent(in)  :: area(:,:,:) ! (lon, lat, tile) fractional area
-  logical, intent(in)  :: mask(:,:,:) ! (lon, lat, tile) land mask
-  real,    intent(out) :: out (:,:)   ! (lon, lat)       result of averaging
-
-  ! --- local vars -----------------------------------------------------------------
-  integer  :: it                      ! iterator over tile number
-  real     :: s(size(x,1),size(x,2))  ! area accumulator
-
-  s(:,:)   = 0.0
-  out(:,:) = 0.0
-
-  do it = 1,size(area,3)
-     where (mask(:,:,it)) 
-        out(:,:) = out(:,:) + x(:,:,it)*area(:,:,it)
-        s(:,:)   = s(:,:) + area(:,:,it)
-     endwhere
-  enddo
-
-  where( s(:,:) > 0 ) &
-       out(:,:) = out(:,:)/s(:,:)
-
-end subroutine average_tiles
-
 subroutine Lnd_stock_pe(bnd,index,value)
-type(land_data_type), intent(in) :: bnd
-integer, intent(in) :: index
-real,    intent(out) :: value
+
+type(land_data_type), intent(in)  :: bnd 
+integer             , intent(in)  :: index
+real                , intent(out) :: value ! Domain water (Kg) or heat (Joules)
 
 value = 0.0
-
+ 
 end subroutine Lnd_stock_pe
+! ============================================================================
 
 end module land_model_mod
-   
