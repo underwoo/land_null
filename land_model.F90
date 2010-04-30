@@ -35,7 +35,7 @@ public :: Lnd_stock_pe          ! return stocks of conservative quantities
 
 character(len=*), parameter :: &
      version = '$Id: land_model.F90,v 18.0 2010/03/02 23:37:40 fms Exp $', &
-     tagname = '$Name: riga $'
+     tagname = '$Name: riga_201004 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
