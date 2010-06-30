@@ -1,21 +1,24 @@
 module land_model_mod ! This is the null version
 
-use  mpp_domains_mod, only : CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domain
-use  mpp_domains_mod, only : domain2d, mpp_define_layout, mpp_define_domains
-use  mpp_domains_mod, only : mpp_get_ntile_count, mpp_get_tile_id, mpp_get_current_ntile
+use  mpp_mod,           only : mpp_pe
 
-use time_manager_mod, only : time_type
+use  mpp_domains_mod,   only : CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domain
+use  mpp_domains_mod,   only : domain2d, mpp_define_layout, mpp_define_domains
+use  mpp_domains_mod,   only : mpp_get_ntile_count, mpp_get_tile_id, mpp_get_current_ntile
 
-use diag_manager_mod, only : diag_axis_init
+use time_manager_mod,   only : time_type
+
+use diag_manager_mod,   only : diag_axis_init
 
 use tracer_manager_mod, only : register_tracers
 
-use field_manager_mod , only : MODEL_LAND
+use field_manager_mod,  only : MODEL_LAND
 
-use          fms_mod, only : write_version_number, error_mesg, FATAL, mpp_npes
+use          fms_mod,  only : write_version_number, error_mesg, FATAL, mpp_npes
 
-use         grid_mod, only : get_grid_ntiles, get_grid_size, define_cube_mosaic
-use         grid_mod, only : get_grid_cell_vertices, get_grid_cell_centers
+use         grid_mod,  only : get_grid_ntiles, get_grid_size, define_cube_mosaic
+use         grid_mod,  only : get_grid_cell_vertices, get_grid_cell_centers
+use         grid_mod,  only : get_grid_cell_area, get_grid_comp_area
 
 implicit none
 private
@@ -34,8 +37,8 @@ public :: Lnd_stock_pe          ! return stocks of conservative quantities
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 18.0 2010/03/02 23:37:40 fms Exp $', &
-     tagname = '$Name: riga_201004 $'
+     version = '$Id: land_model.F90,v 18.0.2.1 2010/06/07 21:26:36 rab Exp $', &
+     tagname = '$Name: riga_201006 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
@@ -120,10 +123,11 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   integer :: nlon, nlat ! size of global grid in lon and lat directions
   integer :: ntiles     ! number of tiles in the mosaic grid
   integer :: is,ie,js,je,id_lon,id_lat,i
-  type(domain2d) :: domain
+  type(domain2d), save :: domain
+  real, allocatable, dimension(:,:)  :: garea, gcellarea, gfrac
   real, allocatable, dimension(:,:)  :: glon, glat
   integer, allocatable, dimension(:) :: tile_ids
-  integer :: ntracers, ntprog, ndiag
+  integer :: ntracers, ntprog, ndiag, face, npes_per_tile
   integer :: layout(2) = (/0,0/)
 
   call write_version_number (version, tagname)
@@ -146,9 +150,18 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   endif
   land2cplr%domain = domain
 
+  npes_per_tile = mpp_npes()/ntiles
+  face = mpp_pe()/npes_per_tile + 1
+  allocate(garea(nlon,nlat), gcellarea(nlon,nlat), gfrac(nlon,nlat))
+  call get_grid_cell_area    ('LND',face,gcellarea)
+  call get_grid_comp_area    ('LND',face,garea)
+  gfrac = garea/gcellarea
+  
+
   call mpp_get_compute_domain(domain, is,ie,js,je)
   allocate(land2cplr%tile_size(is:ie,js:je,1))
-  land2cplr%tile_size = 0.0
+  land2cplr%tile_size(is:ie,js:je,1) = gfrac(is:ie,js:je)
+  deallocate(gfrac, garea, gcellarea)
 
   allocate(tile_ids(mpp_get_current_ntile(domain)))
   tile_ids = mpp_get_tile_id(domain)
@@ -202,7 +215,7 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   land2cplr%albedo_nir_dif    = 0.0
   land2cplr%rough_mom         = 0.0
   land2cplr%rough_heat        = 0.0
-  land2cplr%rough_scale       = 0.0
+  land2cplr%rough_scale       = 1.0
   land2cplr%discharge         = 0.0
   land2cplr%discharge_heat    = 0.0
   land2cplr%discharge_snow    = 0.0
