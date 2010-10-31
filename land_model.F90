@@ -1,6 +1,6 @@
 module land_model_mod ! This is the null version
 
-use  mpp_mod,           only : mpp_pe
+use  mpp_mod,           only : mpp_pe, mpp_chksum
 
 use  mpp_domains_mod,   only : CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domain
 use  mpp_domains_mod,   only : domain2d, mpp_define_layout, mpp_define_domains
@@ -14,7 +14,7 @@ use tracer_manager_mod, only : register_tracers
 
 use field_manager_mod,  only : MODEL_LAND
 
-use          fms_mod,  only : write_version_number, error_mesg, FATAL, mpp_npes
+use          fms_mod,  only : write_version_number, error_mesg, FATAL, mpp_npes, stdout
 
 use         grid_mod,  only : get_grid_ntiles, get_grid_size, define_cube_mosaic
 use         grid_mod,  only : get_grid_cell_vertices, get_grid_cell_centers
@@ -33,12 +33,13 @@ public update_land_model_slow   ! time-step integration
 public atmos_land_boundary_type ! data from coupler to land
 public land_data_type           ! data from land to coupler
 public :: Lnd_stock_pe          ! return stocks of conservative quantities
+public land_data_type_chksum, atm_lnd_bnd_type_chksum
 
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 18.0.2.1 2010/06/07 21:26:36 rab Exp $', &
-     tagname = '$Name: riga_201006 $'
+     version = '$Id: land_model.F90,v 18.0.2.1.2.1 2010/08/13 13:24:45 wfc Exp $', &
+     tagname = '$Name: riga_201012 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
@@ -321,4 +322,141 @@ value = 0.0
 end subroutine Lnd_stock_pe
 ! ============================================================================
 
+!#######################################################################
+! <SUBROUTINE NAME="atm_lnd_bnd_type_chksum">
+!
+! <OVERVIEW>
+!  Print checksums of the various fields in the atmos_land_boundary_type.
+! </OVERVIEW>
+
+! <DESCRIPTION>
+!  Routine to print checksums of the various fields in the atmos_land_boundary_type.
+! </DESCRIPTION>
+
+! <TEMPLATE>
+!   call atm_lnd_bnd_type_chksum(id, timestep, albt)
+! </TEMPLATE>
+
+! <IN NAME="albt" TYPE="type(atmos_land_boundary_type)">
+!   Derived-type variable that contains fields in the atmos_land_boundary_type.
+! </INOUT>
+!
+! <IN NAME="id" TYPE="character">
+!   Label to differentiate where this routine in being called from.
+! </IN>
+!
+! <IN NAME="timestep" TYPE="integer">
+!   An integer to indicate which timestep this routine is being called for.
+! </IN>
+!
+subroutine atm_lnd_bnd_type_chksum(id, timestep, albt)
+
+    character(len=*), intent(in) :: id
+    integer         , intent(in) :: timestep
+    type(atmos_land_boundary_type), intent(in) :: albt
+ integer ::   n, outunit
+ 
+    outunit = stdout()
+
+    write(outunit,*) 'BEGIN CHECKSUM(atmos_land_boundary_type):: ', id, timestep
+    write(outunit,100) 'albt%t_flux                ', mpp_chksum( albt%t_flux)
+    write(outunit,100) 'albt%lw_flux               ', mpp_chksum( albt%lw_flux)
+    write(outunit,100) 'albt%lwdn_flux             ', mpp_chksum( albt%lwdn_flux)
+    write(outunit,100) 'albt%sw_flux               ', mpp_chksum( albt%sw_flux)
+    write(outunit,100) 'albt%swdn_flux               ', mpp_chksum( albt%swdn_flux)
+    write(outunit,100) 'albt%lprec                 ', mpp_chksum( albt%lprec)
+    write(outunit,100) 'albt%fprec                 ', mpp_chksum( albt%fprec)
+    write(outunit,100) 'albt%tprec                 ', mpp_chksum( albt%tprec)
+    write(outunit,100) 'albt%sw_flux_down_vis_dir  ', mpp_chksum( albt%sw_flux_down_vis_dir)
+    write(outunit,100) 'albt%sw_flux_down_total_dir', mpp_chksum( albt%sw_flux_down_total_dir)
+    write(outunit,100) 'albt%sw_flux_down_vis_dif  ', mpp_chksum( albt%sw_flux_down_vis_dif)
+    write(outunit,100) 'albt%sw_flux_down_total_dif', mpp_chksum( albt%sw_flux_down_total_dif)
+    write(outunit,100) 'albt%dhdt                  ', mpp_chksum( albt%dhdt)
+    write(outunit,100) 'albt%dhdq                  ', mpp_chksum( albt%dhdq)
+    write(outunit,100) 'albt%drdt                  ', mpp_chksum( albt%drdt)
+    write(outunit,100) 'albt%cd_m                  ', mpp_chksum( albt%cd_m)
+    write(outunit,100) 'albt%cd_t                  ', mpp_chksum( albt%cd_t)
+    write(outunit,100) 'albt%ustar                 ', mpp_chksum( albt%ustar)
+    write(outunit,100) 'albt%bstar                 ', mpp_chksum( albt%bstar)
+    write(outunit,100) 'albt%wind                  ', mpp_chksum( albt%wind)
+    write(outunit,100) 'albt%z_bot                 ', mpp_chksum( albt%z_bot)
+    write(outunit,100) 'albt%drag_q                ', mpp_chksum( albt%drag_q)
+    write(outunit,100) 'albt%p_surf                ', mpp_chksum( albt%p_surf)
+    do n = 1,size(albt%tr_flux,4)
+    write(outunit,100) 'albt%tr_flux               ', mpp_chksum( albt%tr_flux(:,:,:,n))
+    enddo
+    do n = 1,size(albt%dfdtr,4)
+    write(outunit,100) 'albt%dfdtr                 ', mpp_chksum( albt%dfdtr(:,:,:,n))
+    enddo
+
+100 FORMAT("CHECKSUM::",A32," = ",Z20)
+
+end subroutine atm_lnd_bnd_type_chksum
+
+! </SUBROUTINE>
+
+!#######################################################################
+! <SUBROUTINE NAME="land_data_type_chksum">
+!
+! <OVERVIEW>
+!  Print checksums of the various fields in the land_data_type.
+! </OVERVIEW>
+
+! <DESCRIPTION>
+!  Routine to print checksums of the various fields in the land_data_type.
+! </DESCRIPTION>
+
+! <TEMPLATE>
+!   call land_data_type_chksum(id, timestep, land)
+! </TEMPLATE>
+
+! <IN NAME="land" TYPE="type(land_data_type)">
+!   Derived-type variable that contains fields in the land_data_type.
+! </INOUT>
+!
+! <IN NAME="id" TYPE="character">
+!   Label to differentiate where this routine in being called from.
+! </IN>
+!
+! <IN NAME="timestep" TYPE="integer">
+!   An integer to indicate which timestep this routine is being called for.
+! </IN>
+!
+
+subroutine land_data_type_chksum(id, timestep, land)
+  use fms_mod,                 only: stdout
+  use mpp_mod,                 only: mpp_chksum
+
+    character(len=*), intent(in) :: id
+    integer         , intent(in) :: timestep
+    type(land_data_type), intent(in) :: land
+    integer ::   n, outunit
+ 
+    outunit = stdout()
+
+    write(outunit,*) 'BEGIN CHECKSUM(land_data_type):: ', id, timestep
+    write(outunit,100) 'land%tile_size         ',mpp_chksum(land%tile_size)
+    write(outunit,100) 'land%t_surf            ',mpp_chksum(land%t_surf)
+    write(outunit,100) 'land%t_ca              ',mpp_chksum(land%t_ca)
+    write(outunit,100) 'land%albedo            ',mpp_chksum(land%albedo)
+    write(outunit,100) 'land%albedo_vis_dir    ',mpp_chksum(land%albedo_vis_dir)
+    write(outunit,100) 'land%albedo_nir_dir    ',mpp_chksum(land%albedo_nir_dir)
+    write(outunit,100) 'land%albedo_vis_dif    ',mpp_chksum(land%albedo_vis_dif)
+    write(outunit,100) 'land%albedo_nir_dif    ',mpp_chksum(land%albedo_nir_dif)
+    write(outunit,100) 'land%rough_mom         ',mpp_chksum(land%rough_mom)
+    write(outunit,100) 'land%rough_heat        ',mpp_chksum(land%rough_heat)
+    write(outunit,100) 'land%rough_scale       ',mpp_chksum(land%rough_scale)
+
+    do n = 1, size(land%tr,4)
+    write(outunit,100) 'land%tr                ',mpp_chksum(land%tr(:,:,:,n))
+    enddo
+    write(outunit,100) 'land%discharge         ',mpp_chksum(land%discharge)
+    write(outunit,100) 'land%discharge_snow    ',mpp_chksum(land%discharge_snow)
+    write(outunit,100) 'land%discharge_heat    ',mpp_chksum(land%discharge_heat)
+
+
+100 FORMAT("CHECKSUM::",A32," = ",Z20)
+end subroutine land_data_type_chksum
+
+! </SUBROUTINE>
 end module land_model_mod
