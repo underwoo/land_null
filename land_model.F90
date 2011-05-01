@@ -39,7 +39,7 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 
 character(len=*), parameter :: &
      version = '$Id: land_model.F90,v 18.0.2.1.2.1 2010/08/13 13:24:45 wfc Exp $', &
-     tagname = '$Name: riga_201012 $'
+     tagname = '$Name: riga_201104 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
