@@ -38,8 +38,8 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 18.0.2.1.2.1 2010/08/13 13:24:45 wfc Exp $', &
-     tagname = '$Name: riga_201104 $'
+     version = '$Id: land_model.F90,v 19.0 2012/01/06 20:44:42 fms Exp $', &
+     tagname = '$Name: siena $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
@@ -111,7 +111,8 @@ end type land_data_type
 contains
 
 ! ============================================================================
-subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_slow)
+subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_slow, &
+                            glon_bnd, glat_bnd, Domain_in)
 
   type(atmos_land_boundary_type), intent(inout) :: cplr2land ! boundary data
   type(land_data_type)          , intent(inout) :: land2cplr ! boundary data
@@ -119,6 +120,8 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   type(time_type), intent(in) :: time      ! current time
   type(time_type), intent(in) :: dt_fast   ! fast time step
   type(time_type), intent(in) :: dt_slow   ! slow time step
+  real, dimension(:,:), optional :: glon_bnd, glat_bnd
+  type(domain2d), optional :: Domain_in
 
  ! ---- local vars
   integer :: nlon, nlat ! size of global grid in lon and lat directions
