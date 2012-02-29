@@ -39,7 +39,7 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 
 character(len=*), parameter :: &
      version = '$Id: land_model.F90,v 19.0 2012/01/06 20:44:42 fms Exp $', &
-     tagname = '$Name: siena $'
+     tagname = '$Name: siena_201202 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
