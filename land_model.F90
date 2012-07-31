@@ -1,6 +1,43 @@
 module land_model_mod ! This is the null version
 
+!<CONTACT EMAIL="Zhi.Liang@noaa.gov"> Zhi Liang
+!</CONTACT>
+!
+!<OVERVIEW>
+! Null land model. 
+!</OVERVIEW>
+!<DESCRIPTION>
+! Null land model. 
+!</DESCRIPTION>
+!
+!<NAMELIST NAME="land_model_nml">
+!  <DATA NAME="layout" TYPE="integer">
+!  Processor domain layout for land model. 
+!  </DATA> 
+!  <DATA NAME="mask_table" TYPE="character">
+!   A text file to specify n_mask, layout and mask_list to reduce number of processor
+!   usage by masking out some domain regions which contain all land points. 
+!   The default file name of mask_table is "INPUT/land_mask_table". Please note that 
+!   the file name must begin with "INPUT/". The first 
+!   line of mask_table will be number of region to be masked out. The second line 
+!   of the mask_table will be the layout of the model. User need to set land_model_nml
+!   variable layout to be the same as the second line of the mask table.
+!   The following n_mask line will be the position of the processor to be masked out.
+!   The mask_table could be created by tools check_mask. 
+!   For example the mask_table will be as following if n_mask=2, layout=4,6 and 
+!   the processor (1,2) and (3,6) will be masked out. 
+!     2
+!     4,6
+!     1,2
+!     3,6
+!  </DATA>
+!
+
+!</NAMELIST>
+
+
 use  mpp_mod,           only : mpp_pe, mpp_chksum
+use  mpp_mod,           only : input_nml_file
 
 use  mpp_domains_mod,   only : CYCLIC_GLOBAL_DOMAIN, mpp_get_compute_domain
 use  mpp_domains_mod,   only : domain2d, mpp_define_layout, mpp_define_domains
@@ -15,6 +52,8 @@ use tracer_manager_mod, only : register_tracers
 use field_manager_mod,  only : MODEL_LAND
 
 use          fms_mod,  only : write_version_number, error_mesg, FATAL, mpp_npes, stdout
+use          fms_mod,  only : open_namelist_file, check_nml_error, file_exist, close_file
+use       fms_io_mod,  only : parse_mask_table
 
 use         grid_mod,  only : get_grid_ntiles, get_grid_size, define_cube_mosaic
 use         grid_mod,  only : get_grid_cell_vertices, get_grid_cell_centers
@@ -38,8 +77,8 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 19.0 2012/01/06 20:44:42 fms Exp $', &
-     tagname = '$Name: siena_201204 $'
+     version = '$Id: land_model.F90,v 18.0.2.1.2.1.2.1.2.1.2.2.2.1.2.1 2012/05/31 15:56:39 Niki.Zadeh Exp $', &
+     tagname = '$Name: siena_201207 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
@@ -106,7 +145,16 @@ type :: land_data_type
    integer :: axes(2)        ! IDs of diagnostic axes
    type(domain2d) :: domain  ! our computation domain
    logical, pointer :: maskmap(:,:) 
+   integer, pointer, dimension(:) :: pelist
 end type land_data_type
+
+!---- land_model_nml
+integer :: layout(2)
+! mask_table contains information for masking domain ( n_mask, layout and mask_list).
+character(len=128) :: mask_table = "INPUT/land_mask_table"
+
+namelist /land_model_nml/ layout, mask_table
+
 
 contains
 
@@ -132,26 +180,56 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   real, allocatable, dimension(:,:)  :: glon, glat
   integer, allocatable, dimension(:) :: tile_ids
   integer :: ntracers, ntprog, ndiag, face, npes_per_tile
-  integer :: layout(2) = (/0,0/)
+  integer :: namelist_unit, io, ierr, stdoutunit
+
+!--- read namelist
+#ifdef INTERNAL_FILE_NML
+   read (input_nml_file, land_model_nml, iostat=io)
+#else
+   namelist_unit = open_namelist_file()
+   ierr=1
+   do while (ierr /= 0)
+     read(namelist_unit, nml=land_model_nml, iostat=io, end=20)
+     ierr = check_nml_error (io, 'land_model_nml')
+   enddo
+   20 call close_file (namelist_unit)
+#endif
+
+  stdoutunit = stdout()
 
   call write_version_number (version, tagname)
 
   ! define the processor layout information according to the global grid size 
   call get_grid_ntiles('LND',ntiles)
   call get_grid_size('LND',1,nlon,nlat)
-  if( layout(1)==0 .AND. layout(2)==0 ) then
-    call mpp_define_layout( (/1,nlon,1,nlat/), mpp_npes()/ntiles, layout )
-  endif
-  if( layout(1)/=0 .AND. layout(2)==0 )layout(2) = mpp_npes()/(layout(1)*ntiles)
-  if( layout(1)==0 .AND. layout(2)/=0 )layout(1) = mpp_npes()/(layout(2)*ntiles)
-  
-  ! defne land model domain
-  if (ntiles==1) then
-     call mpp_define_domains ((/1,nlon, 1, nlat/), layout, domain, xhalo=1, yhalo=1,&
-          xflags = CYCLIC_GLOBAL_DOMAIN, name = 'LAND MODEL')
+ 
+  if(file_exist(mask_table)) then
+     if(ntiles > 1) then
+        call error_mesg('land_model_init', &
+          'file '//trim(mask_table)//' should not exist when ntiles is not 1', FATAL)
+     endif
+     if(layout(1) == 0 .OR. layout(2) == 0 ) call error_mesg('land_model_init', &
+          'land_model_nml layout should be set when file '//trim(mask_table)//' exists', FATAL)
+
+     write(stdoutunit, '(a)') '==> NOTE from land_model_init:  reading maskmap information from '//trim(mask_table)
+     allocate(land2cplr%maskmap(layout(1), layout(2)))
+     call parse_mask_table(mask_table, land2cplr%maskmap, "Land model")
   else
-     call define_cube_mosaic ('LND', domain, layout, halo=1)
+     if(layout(1)*layout(2) .NE. mpp_npes()/ntiles) call mpp_define_layout((/1,nlon,1,nlat/), mpp_npes()/ntiles, layout)
   endif
+
+  if(ntiles ==1) then
+     if( ASSOCIATED(land2cplr%maskmap) ) then
+        call mpp_define_domains((/1,nlon,1,nlat/), layout, domain, &
+             xflags = CYCLIC_GLOBAL_DOMAIN, xhalo=1, yhalo=1, maskmap = land2cplr%maskmap , name='land model')
+     else
+        call mpp_define_domains((/1,nlon,1,nlat/), layout, domain, &
+             xflags = CYCLIC_GLOBAL_DOMAIN, xhalo=1, yhalo=1, name='land model')
+     end if
+  else
+     call define_cube_mosaic('LND', domain, layout, halo=1)
+  endif
+
   land2cplr%domain = domain
 
   npes_per_tile = mpp_npes()/ntiles
