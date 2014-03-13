@@ -78,7 +78,7 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 
 character(len=*), parameter :: &
      version = '$Id: land_model.F90,v 20.0 2013/12/13 23:31:21 fms Exp $', &
-     tagname = '$Name: tikal $'
+     tagname = '$Name: tikal_201403 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
