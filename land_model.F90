@@ -53,7 +53,7 @@ use field_manager_mod,  only : MODEL_LAND
 
 use          fms_mod,  only : write_version_number, error_mesg, FATAL, mpp_npes, stdout
 use          fms_mod,  only : open_namelist_file, check_nml_error, file_exist, close_file
-use       fms_io_mod,  only : parse_mask_table
+use       fms_io_mod,  only : parse_mask_table, set_domain, nullify_domain
 
 use         grid_mod,  only : get_grid_ntiles, get_grid_size, define_cube_mosaic
 use         grid_mod,  only : get_grid_cell_vertices, get_grid_cell_centers
@@ -77,8 +77,8 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 20.0 2013/12/13 23:31:21 fms Exp $', &
-     tagname = '$Name: ulm $'
+     version = '$Id: land_model.F90,v 20.0.2.1 2015/03/03 19:13:08 Zhi.Liang Exp $', &
+     tagname = '$Name: ulm_201505 $'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
@@ -176,7 +176,7 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   integer :: ntiles     ! number of tiles in the mosaic grid
   integer :: is,ie,js,je,id_lon,id_lat,i
   type(domain2d), save :: domain
-  real, allocatable, dimension(:,:)  :: garea, gcellarea, gfrac
+  real, allocatable, dimension(:,:)  :: area, cellarea, frac
   real, allocatable, dimension(:,:)  :: glon, glat
   integer, allocatable, dimension(:) :: tile_ids
   integer :: ntracers, ntprog, ndiag, face, npes_per_tile
@@ -230,20 +230,22 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
      call define_cube_mosaic('LND', domain, layout, halo=1)
   endif
 
+  call set_domain(domain)
+  call mpp_get_compute_domain(domain, is,ie,js,je)
+
   land2cplr%domain = domain
 
   npes_per_tile = mpp_npes()/ntiles
   face = (mpp_pe()-mpp_root_pe())/npes_per_tile + 1
-  allocate(garea(nlon,nlat), gcellarea(nlon,nlat), gfrac(nlon,nlat))
-  call get_grid_cell_area    ('LND',face,gcellarea)
-  call get_grid_comp_area    ('LND',face,garea)
-  gfrac = garea/gcellarea
-  
+  allocate(area(is:ie,js:je), cellarea(is:ie,js:je), frac(is:ie,js:je))
+  call get_grid_cell_area    ('LND',face,cellarea,domain)
+  call get_grid_comp_area    ('LND',face,area,domain)
+  frac = area/cellarea
+  call nullify_domain()  
 
-  call mpp_get_compute_domain(domain, is,ie,js,je)
   allocate(land2cplr%tile_size(is:ie,js:je,1))
-  land2cplr%tile_size(is:ie,js:je,1) = gfrac(is:ie,js:je)
-  deallocate(gfrac, garea, gcellarea)
+  land2cplr%tile_size(is:ie,js:je,1) = frac(is:ie,js:je)
+  deallocate(frac, area, cellarea)
 
   allocate(tile_ids(mpp_get_current_ntile(domain)))
   tile_ids = mpp_get_tile_id(domain)
