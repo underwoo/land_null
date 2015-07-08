@@ -77,8 +77,8 @@ public land_data_type_chksum, atm_lnd_bnd_type_chksum
 ! ==== end of public interfaces ==============================================
 
 character(len=*), parameter :: &
-     version = '$Id: land_model.F90,v 20.0.2.1 2015/03/03 19:13:08 Zhi.Liang Exp $', &
-     tagname = '$Name: testing $'
+     version = '$Id$', &
+     tagname = '$Name$'
 
 type :: atmos_land_boundary_type
    real, dimension(:,:,:), pointer :: & ! (lon, lat, tile)
