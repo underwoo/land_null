@@ -73,6 +73,14 @@ public atmos_land_boundary_type ! data from coupler to land
 public land_data_type           ! data from land to coupler
 public :: Lnd_stock_pe          ! return stocks of conservative quantities
 public land_data_type_chksum, atm_lnd_bnd_type_chksum
+public set_default_diag_filter, register_tiled_diag_field, send_tile_data
+
+interface send_tile_data
+   module procedure send_tile_data_0d
+   module procedure send_tile_data_1d
+   module procedure send_tile_data_2d
+   module procedure send_tile_data_3d
+end interface
 
 ! ==== end of public interfaces ==============================================
 
@@ -147,6 +155,13 @@ type :: land_data_type
    logical, pointer :: maskmap(:,:) 
    integer, pointer, dimension(:) :: pelist
 end type land_data_type
+
+! storage for tile diagnostic data
+type :: diag_buff_type
+   real   , pointer :: data(:) => NULL()
+   logical, pointer :: mask(:) => NULL()
+end type diag_buff_type
+
 
 !---- land_model_nml
 integer :: layout(2)
@@ -373,6 +388,57 @@ subroutine land_model_restart(timestamp)
   character(*), intent(in), optional :: timestamp
   
 end subroutine land_model_restart
+
+! ============================================================================
+function register_tiled_diag_field(module_name, field_name, axes, init_time, &
+     long_name, units, missing_value, range, op, standard_name, fill_missing) result (id)
+
+  integer :: id
+
+  character(len=*), intent(in) :: module_name
+  character(len=*), intent(in) :: field_name
+  integer,          intent(in) :: axes(:)
+  type(time_type),  intent(in) :: init_time
+  character(len=*), intent(in), optional :: long_name
+  character(len=*), intent(in), optional :: units
+  real,             intent(in), optional :: missing_value
+  real,             intent(in), optional :: range(2)
+  integer,          intent(in), optional :: op ! aggregation operation code
+  character(len=*), intent(in), optional :: standard_name
+  logical,          intent(in), optional :: fill_missing
+
+  id = -1
+end function register_tiled_diag_field
+
+! ============================================================================
+subroutine set_default_diag_filter(name)
+   character(*), intent(in) :: name ! name of the selector
+end subroutine set_default_diag_filter
+
+! ============================================================================
+subroutine send_tile_data_0d(id, x)
+  integer, intent(in) :: id
+  real   , intent(in) :: x
+end subroutine send_tile_data_0d
+
+! ============================================================================
+subroutine send_tile_data_1d(id, x)
+  integer, intent(in) :: id
+  real   , intent(in) :: x(:)
+end subroutine send_tile_data_1d
+
+! ============================================================================
+subroutine send_tile_data_2d(id, x, send_immediately)
+  integer, intent(in) :: id
+  real   , intent(in) :: x(:,:)
+  logical,optional, intent(in) :: send_immediately
+end subroutine send_tile_data_2d
+! ============================================================================
+subroutine send_tile_data_3d(id, x, send_immediately)
+  integer, intent(in) :: id
+  real   , intent(in) :: x(:,:,:)
+  logical,optional, intent(in) :: send_immediately
+end subroutine send_tile_data_3d
 
 ! ============================================================================
 subroutine update_land_model_fast ( cplr2land, land2cplr )
