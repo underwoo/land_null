@@ -1,3 +1,23 @@
+!***********************************************************************
+!*                   GNU Lesser General Public License
+!*
+!* This file is part of the GFDL Land Null Model Component.
+!*
+!* Land Null is free software: you can redistribute it and/or modify it
+!* under the terms of the GNU Lesser General Public License as published
+!* by the Free Software Foundation, either version 3 of the License, or
+!* (at your option) any later version.
+!*
+!* Land Null is distributed in the hope that it will be useful, but
+!* WITHOUT ANY WARRANTY; without even the implied warranty of
+!* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+!* General Public License for more details.
+!*
+!* You should have received a copy of the GNU Lesser General Public
+!* License along with Land Null.
+!* If not, see <http://www.gnu.org/licenses/>.
+!***********************************************************************
+
 module land_model_mod ! This is the null version
 
 !<CONTACT EMAIL="Zhi.Liang@noaa.gov"> Zhi Liang
@@ -214,6 +234,7 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
 
   call write_version_number (version, tagname)
 
+#ifndef LAND_GRID_FROM_ATMOS
   ! define the processor layout information according to the global grid size 
   call get_grid_ntiles('LND',ntiles)
   call get_grid_size('LND',1,nlon,nlat)
@@ -249,7 +270,16 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   call mpp_get_compute_domain(domain, is,ie,js,je)
 
   land2cplr%domain = domain
-
+#else
+  if (present(Domain_in)) then
+     call mpp_get_compute_domain(domain_in, is,ie,js,je)
+     land2cplr%domain = domain_in
+  else
+     call error_mesg('land_model_init', &
+          'domain_in must be used if compiling with -DLAND_GRID_FROM_ATMOS', FATAL)
+  endif
+#endif
+#ifndef LAND_GRID_FROM_ATMOS
   npes_per_tile = mpp_npes()/ntiles
   face = (mpp_pe()-mpp_root_pe())/npes_per_tile + 1
   allocate(area(is:ie,js:je), cellarea(is:ie,js:je), frac(is:ie,js:je))
@@ -261,7 +291,12 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   allocate(land2cplr%tile_size(is:ie,js:je,1))
   land2cplr%tile_size(is:ie,js:je,1) = frac(is:ie,js:je)
   deallocate(frac, area, cellarea)
+#else
+  allocate(land2cplr%tile_size(is:ie,js:je,1))
+  land2cplr%tile_size(is:ie,js:je,1) = 0.0
+#endif
 
+#ifndef LAND_GRID_FROM_ATMOS
   allocate(tile_ids(mpp_get_current_ntile(domain)))
   tile_ids = mpp_get_tile_id(domain)
   allocate(glon(nlon,nlat), glat(nlon,nlat))
@@ -282,6 +317,9 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
      id_lat = diag_axis_init ( 'grid_yt', (/(real(i),i=1,nlat)/), 'degrees_N', 'Y', &
           long_name='T-cell latitude',  set_name='land', domain2=domain, aux='geolat_t' )
   endif
+#else
+  id_lat = -1 ; id_lon = -1
+#endif
   land2cplr%axes = (/id_lon,id_lat/)
 
   call register_tracers(MODEL_LAND, ntracers, ntprog, ndiag)
@@ -372,7 +410,9 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   cplr2land%z_bot                  = 0.0
   cplr2land%drag_q                 = 0.0
 
+#ifndef LAND_GRID_FROM_ATMOS
   deallocate(glon, glat, tile_ids)
+#endif 
 
 end subroutine land_model_init
 
@@ -445,7 +485,9 @@ subroutine update_land_model_fast ( cplr2land, land2cplr )
   type(atmos_land_boundary_type), intent(in)    :: cplr2land
   type(land_data_type)          , intent(inout) :: land2cplr
 
+#ifndef LAND_GRID_FROM_ATMOS
   call error_mesg('update_land_model_fast','Should not be calling null version of update_land_model_fast',FATAL)
+#endif 
 
 end subroutine update_land_model_fast
 
@@ -455,7 +497,9 @@ subroutine update_land_model_slow ( cplr2land, land2cplr )
   type(atmos_land_boundary_type), intent(inout) :: cplr2land
   type(land_data_type)          , intent(inout) :: land2cplr
 
+#ifndef LAND_GRID_FROM_ATMOS
   call error_mesg('update_land_model_slow','Should not be calling null version of update_land_model_slow',FATAL)
+#endif
 
 end subroutine update_land_model_slow
 
