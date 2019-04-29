@@ -24,28 +24,28 @@ module land_model_mod ! This is the null version
 !</CONTACT>
 !
 !<OVERVIEW>
-! Null land model. 
+! Null land model.
 !</OVERVIEW>
 !<DESCRIPTION>
-! Null land model. 
+! Null land model.
 !</DESCRIPTION>
 !
 !<NAMELIST NAME="land_model_nml">
 !  <DATA NAME="layout" TYPE="integer">
-!  Processor domain layout for land model. 
-!  </DATA> 
+!  Processor domain layout for land model.
+!  </DATA>
 !  <DATA NAME="mask_table" TYPE="character">
 !   A text file to specify n_mask, layout and mask_list to reduce number of processor
-!   usage by masking out some domain regions which contain all land points. 
-!   The default file name of mask_table is "INPUT/land_mask_table". Please note that 
-!   the file name must begin with "INPUT/". The first 
-!   line of mask_table will be number of region to be masked out. The second line 
+!   usage by masking out some domain regions which contain all land points.
+!   The default file name of mask_table is "INPUT/land_mask_table". Please note that
+!   the file name must begin with "INPUT/". The first
+!   line of mask_table will be number of region to be masked out. The second line
 !   of the mask_table will be the layout of the model. User need to set land_model_nml
 !   variable layout to be the same as the second line of the mask table.
 !   The following n_mask line will be the position of the processor to be masked out.
-!   The mask_table could be created by tools check_mask. 
-!   For example the mask_table will be as following if n_mask=2, layout=4,6 and 
-!   the processor (1,2) and (3,6) will be masked out. 
+!   The mask_table could be created by tools check_mask.
+!   For example the mask_table will be as following if n_mask=2, layout=4,6 and
+!   the processor (1,2) and (3,6) will be masked out.
 !     2
 !     4,6
 !     1,2
@@ -118,13 +118,13 @@ type :: atmos_land_boundary_type
         lprec     => NULL(), &   ! liquid precipitation rate, kg/(m2 s)
         fprec     => NULL(), &   ! frozen precipitation rate, kg/(m2 s)
         tprec     => NULL(), &   ! temperture of precipitation, degK
-        sw_flux_down_vis_dir   => NULL(), & ! visible direct 
+        sw_flux_down_vis_dir   => NULL(), & ! visible direct
         sw_flux_down_total_dir => NULL(), & ! total direct
         sw_flux_down_vis_dif   => NULL(), & ! visible diffuse
         sw_flux_down_total_dif => NULL(), & ! total diffuse
         dhdt      => NULL(), &   ! sensible w.r.t. surface temperature
         dhdq      => NULL(), &   ! sensible w.r.t. surface humidity
-        drdt      => NULL(), &   ! longwave w.r.t. surface radiative temperature 
+        drdt      => NULL(), &   ! longwave w.r.t. surface radiative temperature
         cd_m      => NULL(), &   ! drag coefficient for momentum, dimensionless
         cd_t      => NULL(), &   ! drag coefficient for tracers, dimensionless
         ustar     => NULL(), &   ! turbulent wind scale, m/s
@@ -136,7 +136,7 @@ type :: atmos_land_boundary_type
 
    real, dimension(:,:,:,:), pointer :: & ! (lon, lat, tile, tracer)
         tr_flux => NULL(),   &   ! tracer flux, including water vapor flux
-        dfdtr   => NULL()        ! derivative of the flux w.r.t. tracer surface value, 
+        dfdtr   => NULL()        ! derivative of the flux w.r.t. tracer surface value,
                                  ! including evap over surface specific humidity
 
    integer :: xtype             !REGRID, REDIST or DIRECT
@@ -151,8 +151,8 @@ type :: land_data_type
         t_ca           => NULL(),  & ! canopy air temperature, degK
         albedo         => NULL(),  & ! broadband land albedo [unused?]
         albedo_vis_dir => NULL(),  & ! albedo for direct visible radiation
-        albedo_nir_dir => NULL(),  & ! albedo for direct NIR radiation 
-        albedo_vis_dif => NULL(),  & ! albedo for diffuse visible radiation 
+        albedo_nir_dir => NULL(),  & ! albedo for direct NIR radiation
+        albedo_vis_dif => NULL(),  & ! albedo for diffuse visible radiation
         albedo_nir_dif => NULL(),  & ! albedo for diffuse NIR radiation
         rough_mom      => NULL(),  & ! surface roughness length for momentum, m
         rough_heat     => NULL(),  & ! roughness length for tracers and heat, m
@@ -172,7 +172,7 @@ type :: land_data_type
 
    integer :: axes(2)        ! IDs of diagnostic axes
    type(domain2d) :: domain  ! our computation domain
-   logical, pointer :: maskmap(:,:) 
+   logical, pointer :: maskmap(:,:)
    integer, pointer, dimension(:) :: pelist
 end type land_data_type
 
@@ -235,10 +235,10 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   call write_version_number (version, tagname)
 
 #ifndef LAND_GRID_FROM_ATMOS
-  ! define the processor layout information according to the global grid size 
+  ! define the processor layout information according to the global grid size
   call get_grid_ntiles('LND',ntiles)
   call get_grid_size('LND',1,nlon,nlat)
- 
+
   if(file_exist(mask_table)) then
      if(ntiles > 1) then
         call error_mesg('land_model_init', &
@@ -286,7 +286,7 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
   call get_grid_cell_area    ('LND',face,cellarea,domain)
   call get_grid_comp_area    ('LND',face,area,domain)
   frac = area/cellarea
-  call nullify_domain()  
+  call nullify_domain()
 
   allocate(land2cplr%tile_size(is:ie,js:je,1))
   land2cplr%tile_size(is:ie,js:je,1) = frac(is:ie,js:je)
@@ -412,7 +412,7 @@ subroutine land_model_init (cplr2land, land2cplr, time_init, time, dt_fast, dt_s
 
 #ifndef LAND_GRID_FROM_ATMOS
   deallocate(glon, glat, tile_ids)
-#endif 
+#endif
 
 end subroutine land_model_init
 
@@ -420,13 +420,13 @@ end subroutine land_model_init
 subroutine land_model_end (cplr2land, land2cplr)
   type(atmos_land_boundary_type), intent(inout) :: cplr2land
   type(land_data_type)          , intent(inout) :: land2cplr
-  
+
 end subroutine land_model_end
 
 ! ============================================================================
 subroutine land_model_restart(timestamp)
   character(*), intent(in), optional :: timestamp
-  
+
 end subroutine land_model_restart
 
 ! ============================================================================
@@ -487,7 +487,7 @@ subroutine update_land_model_fast ( cplr2land, land2cplr )
 
 #ifndef LAND_GRID_FROM_ATMOS
   call error_mesg('update_land_model_fast','Should not be calling null version of update_land_model_fast',FATAL)
-#endif 
+#endif
 
 end subroutine update_land_model_fast
 
@@ -506,12 +506,12 @@ end subroutine update_land_model_slow
 ! ============================================================================
 subroutine Lnd_stock_pe(bnd,index,value)
 
-type(land_data_type), intent(in)  :: bnd 
+type(land_data_type), intent(in)  :: bnd
 integer             , intent(in)  :: index
 real                , intent(out) :: value ! Domain water (Kg) or heat (Joules)
 
 value = 0.0
- 
+
 end subroutine Lnd_stock_pe
 ! ============================================================================
 
@@ -548,7 +548,7 @@ subroutine atm_lnd_bnd_type_chksum(id, timestep, albt)
     integer         , intent(in) :: timestep
     type(atmos_land_boundary_type), intent(in) :: albt
  integer ::   n, outunit
- 
+
     outunit = stdout()
 
     write(outunit,*) 'BEGIN CHECKSUM(atmos_land_boundary_type):: ', id, timestep
@@ -624,7 +624,7 @@ subroutine land_data_type_chksum(id, timestep, land)
     integer         , intent(in) :: timestep
     type(land_data_type), intent(in) :: land
     integer ::   n, outunit
- 
+
     outunit = stdout()
 
     write(outunit,*) 'BEGIN CHECKSUM(land_data_type):: ', id, timestep

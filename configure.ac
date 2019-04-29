@@ -40,15 +40,16 @@ AC_LANG_CONFTEST([AC_LANG_PROGRAM([],[[
        call mpp_init]])])
 # If user specified location with --with-libFMS, check that path for the headers
 if test -n "$with_libFMS" && test "x$with_libFMS" != "xno"; then
-  doit='$FC -c -I${with_libFMS}/include conftest.f'
+  doit='$FC -o conftest -I${with_libFMS}/include conftest.f -L${with_libFMS}/lib -lFMS'
   if AC_TRY_EVAL(doit); then
-    AC_SUBST([LIBFMS_INCLUDE_DIR], [${with_libFMS}/include])
+    AC_SUBST([LIBFMS_LDFLAGS], [-Lsomething -lwhat])
+    AC_SUBST([LIBFMS_CPPFLAGS], [-I${with_libFMS}/include])
     libFMS_found=yes
   else
     libFMS_found=no
   fi
 else
-  doit='$FC -c ${CPPFLAGS} ${FCFLAGS} conftest.f'
+  doit='$FC -o conftest ${CPPFLAGS} ${FCFLAGS} conftest.f $LDFLAGS -lFMS'
   if AC_TRY_EVAL(doit); then
     libFMS_found=yes
   else
@@ -69,5 +70,7 @@ LT_LANG([Fortran])
 AM_INIT_AUTOMAKE([foreign dist-zip])
 
 # These files will be created when the configure script is run
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile
+                 t/Makefile
+                ])
 AC_OUTPUT()

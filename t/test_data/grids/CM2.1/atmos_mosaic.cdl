@@ -1,0 +1,27 @@
+netcdf atmos_mosaic {
+dimensions:
+	ntiles = 1 ;
+	stringlen = 255 ;
+variables:
+	char mosaic(stringlen) ;
+		mosaic:standard_name = "grid_mosaic_spec" ;
+		mosaic:mosaic_spec_version = "0.2" ;
+		mosaic:children = "gridtiles" ;
+		mosaic:contact_regions = "contacts" ;
+		mosaic:grid_descriptor = "" ;
+	char gridlocation(stringlen) ;
+		gridlocation:standard_name = "grid_file_location" ;
+	char gridfiles(ntiles, stringlen) ;
+	char gridtiles(ntiles, stringlen) ;
+data:
+
+ mosaic = "atmos_mosaic" ;
+
+ gridlocation = "./" ;
+
+ gridfiles =
+  "atmos_hgrid.nc" ;
+
+ gridtiles =
+  "tile1" ;
+}

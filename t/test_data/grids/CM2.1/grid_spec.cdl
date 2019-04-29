@@ -1,0 +1,68 @@
+netcdf grid_spec {
+dimensions:
+	stringlen = 255 ;
+	nfile_aXo = 1 ;
+	nfile_aXl = 1 ;
+	nfile_lXo = 1 ;
+variables:
+	char atm_mosaic_dir(stringlen) ;
+		atm_mosaic_dir:standard_name = "directory_storing_atmosphere_mosaic" ;
+	char atm_mosaic_file(stringlen) ;
+		atm_mosaic_file:standard_name = "atmosphere_mosaic_file_name" ;
+	char atm_mosaic(stringlen) ;
+		atm_mosaic:standard_name = "atmosphere_mosaic_name" ;
+	char lnd_mosaic_dir(stringlen) ;
+		lnd_mosaic_dir:standard_name = "directory_storing_land_mosaic" ;
+	char lnd_mosaic_file(stringlen) ;
+		lnd_mosaic_file:standard_name = "land_mosaic_file_name" ;
+	char lnd_mosaic(stringlen) ;
+		lnd_mosaic:standard_name = "land_mosaic_name" ;
+	char ocn_mosaic_dir(stringlen) ;
+		ocn_mosaic_dir:standard_name = "directory_storing_ocean_mosaic" ;
+	char ocn_mosaic_file(stringlen) ;
+		ocn_mosaic_file:standard_name = "ocean_mosaic_file_name" ;
+	char ocn_mosaic(stringlen) ;
+		ocn_mosaic:standard_name = "ocean_mosaic_name" ;
+	char ocn_topog_dir(stringlen) ;
+		ocn_topog_dir:standard_name = "directory_storing_ocean_topog" ;
+	char ocn_topog_file(stringlen) ;
+		ocn_topog_file:standard_name = "ocean_topog_file_name" ;
+	char aXo_file(nfile_aXo, stringlen) ;
+		aXo_file:standard_name = "atmXocn_exchange_grid_file" ;
+	char aXl_file(nfile_aXl, stringlen) ;
+		aXl_file:standard_name = "atmXlnd_exchange_grid_file" ;
+	char lXo_file(nfile_lXo, stringlen) ;
+		lXo_file:standard_name = "lndXocn_exchange_grid_file" ;
+data:
+
+ atm_mosaic_dir = "./" ;
+
+ atm_mosaic_file = "atmos_mosaic.nc" ;
+
+ atm_mosaic = "atmos_mosaic" ;
+
+ lnd_mosaic_dir = "./" ;
+
+ lnd_mosaic_file = "land_mosaic.nc" ;
+
+ lnd_mosaic = "land_mosaic" ;
+
+ ocn_mosaic_dir = "./" ;
+
+ ocn_mosaic_file = "ocean_mosaic.nc" ;
+
+ ocn_mosaic = "ocean_mosaic" ;
+
+ ocn_topog_dir = "./" ;
+
+ ocn_topog_file = "topog.nc" ;
+
+ aXo_file =
+  "atmos_mosaicXocean_mosaic.nc" ;
+
+ aXl_file =
+  "atmos_mosaicXland_mosaic.nc" ;
+
+ lXo_file =
+  "land_mosaicXocean_mosaic.nc" ;
+}
